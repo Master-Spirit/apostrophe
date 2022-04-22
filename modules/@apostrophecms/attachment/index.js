@@ -78,7 +78,10 @@ module.exports = {
           'xltx',
           'csv',
           'docx',
-          'dotx'
+          'dotx',
+          'rar',
+          'zip',
+          '7z'
         ],
         extensionMaps: {},
         // uploadfs should just accept this file as-is
