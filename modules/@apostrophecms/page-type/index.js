@@ -32,7 +32,11 @@ module.exports = {
         orphan: {
           type: 'boolean',
           label: 'apostrophe:hideInNavigation',
-          def: false
+          toggle: {
+            true: 'Да',
+            false: 'Нет',
+          },
+            def: false
         }
       },
       remove: [ 'archived' ],
