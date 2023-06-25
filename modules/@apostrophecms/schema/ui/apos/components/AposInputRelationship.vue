@@ -6,7 +6,19 @@
     :modifiers="modifiers"
   >
     <template #additional>
+      <div
+        v-if="minSize[0] || minSize[1]"
+        class="apos-field__min-size"
+      >
+        {{
+          $t('apostrophe:minSize', {
+            width: minSize[0] || '???',
+            height: minSize[1] || '???'
+          })
+        }}
+      </div>
       <AposMinMaxCount
+        v-if="field.max > 1"
         :field="field"
         :value="next"
       />
@@ -23,11 +35,13 @@
             :required="field.required"
             :id="uid"
             @input="input"
+            @focus="input"
             @focusout="handleFocusOut"
             tabindex="0"
           >
           <AposButton
             class="apos-input-relationship__button"
+            v-if="field.browse !== false"
             :disabled="field.readOnly || limitReached"
             :label="browseLabel"
             :modifiers="buttonModifiers"
@@ -41,13 +55,19 @@
           @input="updateSelected"
           @item-clicked="editRelationship"
           :value="next"
+          :duplicate="duplicate"
           :disabled="field.readOnly"
-          :has-relationship-schema="!!field.schema"
+          :relationship-schema="field.schema"
+          :editor-label="field.editorLabel"
+          :editor-icon="field.editorIcon"
         />
         <AposSearchList
           :list="searchList"
           @select="updateSelected"
           :selected-items="next"
+          :icon="field.suggestionIcon"
+          :icon-size="field.suggestionIconSize"
+          :fields="field.suggestionFields"
           disabled-tooltip="apostrophe:publishBeforeUsingTooltip"
         />
       </div>
@@ -57,6 +77,7 @@
 
 <script>
 import AposInputMixin from 'Modules/@apostrophecms/schema/mixins/AposInputMixin';
+import { klona } from 'klona';
 
 export default {
   name: 'AposInputRelationship',
@@ -64,18 +85,21 @@ export default {
   emits: [ 'input' ],
   data () {
     const next = (this.value && Array.isArray(this.value.data))
-      ? this.value.data : (this.field.def || []);
+      ? klona(this.value.data) : (klona(this.field.def) || []);
+
+    // Remember relationship subfield values even if a document
+    // is temporarily deselected, easing the user's pain if they
+    // inadvertently deselect something for a moment
+    const subfields = Object.fromEntries(
+      (next || []).filter(doc => doc._fields)
+        .map(doc => [ doc._id, doc._fields ])
+    );
+
     return {
       searchTerm: '',
       searchList: [],
       next,
-      // Remember relationship subfield values even if a document
-      // is temporarily deselected, easing the user's pain if they
-      // inadvertently deselect something for a moment
-      subfields: Object.fromEntries((this.next || [])
-        .filter(doc => doc._fields)
-        .map(doc => [ doc._id, doc._fields ])
-      ),
+      subfields,
       disabled: false,
       searching: false,
       choosing: false,
@@ -103,6 +127,37 @@ export default {
         type: this.$t(this.pluralLabel)
       };
     },
+    suggestion() {
+      return {
+        disabled: true,
+        tooltip: false,
+        icon: false,
+        classes: [ 'suggestion' ],
+        title: this.$t(this.field.suggestionLabel),
+        help: this.$t({
+          key: this.field.suggestionHelp || 'apostrophe:relationshipSuggestionHelp',
+          type: this.$t(this.pluralLabel)
+        }),
+        customFields: [ 'help' ]
+      };
+    },
+    hint() {
+      return {
+        disabled: true,
+        tooltip: false,
+        icon: 'binoculars-icon',
+        iconSize: 35,
+        classes: [ 'hint' ],
+        title: this.$t('apostrophe:relationshipSuggestionNoResults'),
+        help: this.$t({
+          key: this.field.browse
+            ? 'apostrophe:relationshipSuggestionSearchAndBrowse'
+            : 'apostrophe:relationshipSuggestionSearch',
+          type: this.$t(this.pluralLabel)
+        }),
+        customFields: [ 'help' ]
+      };
+    },
     chooserComponent () {
       return apos.modules[this.field.withType].components.managerModal;
     },
@@ -115,6 +170,14 @@ export default {
         modifiers.push('block');
       }
       return modifiers;
+    },
+    minSize() {
+      const [ widgetOptions = {} ] = apos.area.widgetOptions;
+
+      return widgetOptions.minSize || [];
+    },
+    duplicate () {
+      return this.value.duplicate ? 'apos-input--error' : null;
     }
   },
   watch: {
@@ -123,23 +186,24 @@ export default {
         this.subfields[doc._id] = doc._fields;
       }
       for (const doc of after) {
-        if (this.subfields[doc._id] && !Object.keys(doc._fields || {}).length) {
-          doc._fields = this.subfields[doc._id];
+        if (Object.keys(doc._fields || {}).length) {
+          continue;
         }
+        doc._fields = this.field.schema && (this.subfields[doc._id]
+          ? this.subfields[doc._id]
+          : this.getDefault());
       }
     }
   },
+  mounted () {
+    this.checkLimit();
+  },
   methods: {
     validate(value) {
+      this.checkLimit();
+
       if (this.field.required && !value.length) {
         return { message: 'required' };
-      }
-      if (this.limitReached) {
-        this.searchTerm = 'Limit reached!';
-        this.disabled = true;
-      } else {
-        this.searchTerm = '';
-        this.disabled = false;
       }
 
       if (this.field.min && this.field.min > value.length) {
@@ -148,31 +212,68 @@ export default {
 
       return false;
     },
+    checkLimit() {
+      if (this.limitReached) {
+        this.searchTerm = 'Limit reached!';
+      } else if (this.searchTerm === 'Limit reached!') {
+        this.searchTerm = '';
+      }
+
+      this.disabled = !!this.limitReached;
+    },
     updateSelected(items) {
       this.next = items;
     },
-    async input () {
-      if (!this.searching) {
-        if (this.searchTerm.length) {
-          this.searching = true;
-          const list = await apos.http.get(`${apos.modules[this.field.withType].action}?autocomplete=${this.searchTerm}`, {
-            busy: false,
-            draft: true
-          });
-          // filter items already selected
-          this.searchList = list.results.filter(item => {
-            return !this.next.map(i => i._id).includes(item._id);
-          }).map(item => {
-            return {
-              ...item,
-              disabled: this.disableUnpublished && !item.lastPublishedAt
-            };
-          });
-          this.searching = false;
-        } else {
-          this.searchList = [];
-        }
+    async search(qs) {
+      if (this.field.suggestionLimit) {
+        qs.perPage = this.field.suggestionLimit;
       }
+      if (this.field.suggestionSort) {
+        qs.sort = this.field.suggestionSort;
+      }
+      if (this.field.withType === '@apostrophecms/image') {
+        apos.bus.$emit('piece-relationship-query', qs);
+      }
+
+      this.searching = true;
+      const list = await apos.http.get(
+        apos.modules[this.field.withType].action,
+        {
+          busy: false,
+          draft: true,
+          qs
+        }
+      );
+
+      const removeSelectedItem = item => !this.next.map(i => i._id).includes(item._id);
+      const formatItems = item => ({
+        ...item,
+        disabled: this.disableUnpublished && !item.lastPublishedAt
+      });
+
+      const results = (list.results || [])
+        .filter(removeSelectedItem)
+        .map(formatItems);
+
+      const suggestion = !qs.autocomplete && this.suggestion;
+      const hint = (!qs.autocomplete || !results.length) && this.hint;
+
+      this.searchList = [ suggestion, ...results, hint ].filter(Boolean);
+      this.searching = false;
+    },
+    async input () {
+      if (this.searching) {
+        return;
+      }
+
+      const trimmed = this.searchTerm.trim();
+      const qs = trimmed.length
+        ? {
+          autocomplete: trimmed
+        }
+        : {};
+
+      await this.search(qs);
     },
     handleFocusOut() {
       // hide search list when click outside the input
@@ -198,11 +299,15 @@ export default {
       }
     },
     async editRelationship (item) {
-      const result = await apos.modal.execute('AposRelationshipEditor', {
+      const editor = this.field.editor || 'AposRelationshipEditor';
+
+      const result = await apos.modal.execute(editor, {
         schema: this.field.schema,
+        item,
         title: item.title,
         value: item._fields
       });
+
       if (result) {
         const index = this.next.findIndex(_item => _item._id === item._id);
         this.$set(this.next, index, {
@@ -210,6 +315,26 @@ export default {
           _fields: result
         });
       }
+    },
+    getEditRelationshipLabel () {
+      if (this.field.editor === 'AposImageRelationshipEditor') {
+        return 'apostrophe:editImageAdjustments';
+      }
+    },
+    getDefault() {
+      const object = {};
+      this.field.schema.forEach(field => {
+        if (field.name.startsWith('_')) {
+          return;
+        }
+        // Using `hasOwn` here, not simply checking if `field.def` is truthy
+        // so that `false`, `null`, `''` or `0` are taken into account:
+        const hasDefaultValue = Object.hasOwn(field, 'def');
+        object[field.name] = hasDefaultValue
+          ? klona(field.def)
+          : null;
+      });
+      return object;
     }
   }
 };
@@ -217,6 +342,7 @@ export default {
 
 <style lang="scss" scoped>
   .apos-input-relationship__input-wrapper {
+    z-index: $z-index-widget-focused-controls;
     position: relative;
 
     .apos-input-relationship__button {
@@ -233,7 +359,7 @@ export default {
   }
 
   .apos-input-relationship__items {
-    padding: relative;
+    position: relative;
     margin-top: $spacing-base;
   }
 
@@ -248,5 +374,13 @@ export default {
       width: 100%;
       padding: 0;
     }
+  }
+
+  .apos-field__min-size {
+    @include type-help;
+    display: flex;
+    flex-grow: 1;
+    margin-bottom: $spacing-base;
+    font-weight: var(--a-weight-bold);
   }
 </style>

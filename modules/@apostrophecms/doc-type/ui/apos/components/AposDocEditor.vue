@@ -26,14 +26,14 @@
         type="primary" :label="saveLabel"
         :disabled="saveDisabled"
         @click="onRestore"
-        :tooltip="tooltip"
+        :tooltip="errorTooltip"
       />
       <AposButtonSplit
         v-else-if="saveMenu"
         :menu="saveMenu"
         menu-label="Select Save Method"
         :disabled="saveDisabled"
-        :tooltip="tooltip"
+        :tooltip="errorTooltip"
         :selected="savePreference"
         @click="saveHandler($event)"
       />
@@ -42,7 +42,7 @@
       <AposModalRail>
         <AposModalTabs
           :key="tabKey"
-          v-if="tabs.length > 0"
+          v-if="tabs.length"
           :current="currentTab"
           :tabs="tabs"
           :errors="fieldErrors"
@@ -71,6 +71,7 @@
               @validate="triggerValidate"
               :server-errors="serverErrors"
               :ref="tab.name"
+              :generation="generation"
             />
           </div>
         </template>
@@ -95,6 +96,7 @@
             :modifiers="['small', 'inverted']"
             ref="utilitySchema"
             :server-errors="serverErrors"
+            :generation="generation"
           />
         </div>
       </AposModalRail>
@@ -103,15 +105,15 @@
 </template>
 
 <script>
+import { klona } from 'klona';
 import AposModifiedMixin from 'Modules/@apostrophecms/ui/mixins/AposModifiedMixin';
 import AposModalTabsMixin from 'Modules/@apostrophecms/modal/mixins/AposModalTabsMixin';
 import AposEditorMixin from 'Modules/@apostrophecms/modal/mixins/AposEditorMixin';
 import AposPublishMixin from 'Modules/@apostrophecms/ui/mixins/AposPublishMixin';
 import AposArchiveMixin from 'Modules/@apostrophecms/ui/mixins/AposArchiveMixin';
 import AposAdvisoryLockMixin from 'Modules/@apostrophecms/ui/mixins/AposAdvisoryLockMixin';
+import AposDocErrorsMixin from 'Modules/@apostrophecms/modal/mixins/AposDocErrorsMixin';
 import { detectDocChange } from 'Modules/@apostrophecms/schema/lib/detectChange';
-import { klona } from 'klona';
-import cuid from 'cuid';
 
 export default {
   name: 'AposDocEditor',
@@ -121,8 +123,14 @@ export default {
     AposEditorMixin,
     AposPublishMixin,
     AposAdvisoryLockMixin,
-    AposArchiveMixin
+    AposArchiveMixin,
+    AposDocErrorsMixin
   ],
+  provide () {
+    return {
+      originalDoc: this.originalDoc
+    };
+  },
   props: {
     moduleName: {
       type: String,
@@ -140,7 +148,6 @@ export default {
   emits: [ 'modal-result', 'safe-close' ],
   data() {
     return {
-      tabKey: cuid(),
       docType: this.moduleName,
       docReady: false,
       fieldErrors: {},
@@ -151,30 +158,41 @@ export default {
       },
       triggerValidation: false,
       original: null,
+      originalDoc: {
+        ref: null
+      },
       published: null,
-      errorCount: 0,
+      readOnly: false,
       restoreOnly: false,
-      saveMenu: null
+      saveMenu: null,
+      generation: 0
     };
   },
   computed: {
     getOnePath() {
       return `${this.moduleAction}/${this.docId}`;
     },
-    tooltip() {
-      let msg;
-      if (this.errorCount) {
-        msg = {
-          key: 'apostrophe:errorCount',
-          count: this.errorCount
-        };
-      }
-      return msg;
-    },
     followingUtils() {
       return this.followingValues('utility');
     },
+    canEdit() {
+      if (this.original && this.original._id) {
+        return this.original._edit || this.moduleOptions.canEdit;
+      }
+
+      return this.moduleOptions.canEdit;
+    },
+    canPublish() {
+      if (this.original && this.original._id) {
+        return this.original._publish || this.moduleOptions.canPublish;
+      }
+
+      return this.moduleOptions.canPublish;
+    },
     saveDisabled() {
+      if (!this.canEdit) {
+        return true;
+      }
       if (this.restoreOnly) {
         // Can always restore if it's a read-only view of the archive
         return false;
@@ -197,7 +215,7 @@ export default {
       if (!this.manuallyPublished) {
         return true;
       }
-      if (this.moduleOptions.canPublish) {
+      if (this.canPublish) {
         // Primary button is "publish". If it is previously published and the
         // draft is not modified since then, don't allow it
         return this.published && !this.isModifiedFromPublished;
@@ -227,51 +245,12 @@ export default {
       // `@apostrophecms/page` module action.
       return (window.apos.modules[this.moduleName] || {}).action;
     },
-    groups() {
-      const groupSet = {};
-
-      this.schema.forEach(field => {
-        if (!this.filterOutParkedFields([ field.name ]).length) {
-          return;
-        }
-        if (field.group && !groupSet[field.group.name]) {
-          groupSet[field.group.name] = {
-            label: field.group.label,
-            fields: [ field.name ],
-            schema: [ field ]
-          };
-        } else if (field.group) {
-          groupSet[field.group.name].fields.push(field.name);
-          groupSet[field.group.name].schema.push(field);
-        }
-      });
-      if (!groupSet.utility) {
-        groupSet.utility = {
-          label: 'apostrophe:utility',
-          fields: [],
-          schema: []
-        };
-      }
-      return groupSet;
-    },
     utilityFields() {
       let fields = [];
       if (this.groups.utility && this.groups.utility.fields) {
         fields = this.groups.utility.fields;
       }
       return this.filterOutParkedFields(fields);
-    },
-    tabs() {
-      const tabs = [];
-      for (const key in this.groups) {
-        if (key !== 'utility') {
-          tabs.push({
-            name: key,
-            label: this.groups[key].label
-          });
-        }
-      };
-      return tabs;
     },
     modalTitle() {
       if (this.docId) {
@@ -300,7 +279,7 @@ export default {
       if (this.restoreOnly) {
         return 'apostrophe:restore';
       } else if (this.manuallyPublished) {
-        if (this.moduleOptions.canPublish) {
+        if (this.canPublish) {
           if (this.copyOf) {
             return 'apostrophe:publish';
           } else if (this.original && this.original.lastPublishedAt) {
@@ -360,15 +339,10 @@ export default {
     manuallyPublished() {
       this.saveMenu = this.computeSaveMenu();
     },
-    original() {
+    original(newVal) {
+      this.originalDoc.ref = newVal;
       this.saveMenu = this.computeSaveMenu();
-    },
-    tabs() {
-      if ((!this.currentTab) || (!this.tabs.find(tab => tab.name === this.currentTab))) {
-        this.currentTab = this.tabs[0] && this.tabs[0].name;
-      }
     }
-
   },
   async mounted() {
     this.modal.active = true;
@@ -458,10 +432,6 @@ export default {
     async loadDoc() {
       let docData;
       try {
-        if (!await this.lock(this.getOnePath, this.docId)) {
-          await this.lockNotAvailable();
-          return;
-        }
         docData = await apos.http.get(this.getOnePath, {
           busy: true,
           qs: {
@@ -474,6 +444,12 @@ export default {
           this.restoreOnly = true;
         } else {
           this.restoreOnly = false;
+        }
+        const canEdit = docData._edit || this.moduleOptions.canEdit;
+        this.readOnly = canEdit === false;
+        if (canEdit && !await this.lock(this.getOnePath, this.docId)) {
+          await this.lockNotAvailable();
+          return;
         }
       } catch {
         await apos.notify('apostrophe:loadDocFailed', {
@@ -488,7 +464,10 @@ export default {
             this.docType = docData.type;
           }
           this.original = klona(docData);
-          this.docFields.data = docData;
+          this.docFields.data = {
+            ...this.getDefault(),
+            ...docData
+          };
           if (this.published) {
             this.changed = detectDocChange(this.schema, this.original, this.published, { differences: true });
           }
@@ -497,56 +476,26 @@ export default {
         }
       }
     },
+    getDefault() {
+      const doc = {};
+      this.schema.forEach(field => {
+        if (field.name.startsWith('_')) {
+          return;
+        }
+        // Using `hasOwn` here, not simply checking if `field.def` is truthy
+        // so that `false`, `null`, `''` or `0` are taken into account:
+        const hasDefaultValue = Object.hasOwn(field, 'def');
+        doc[field.name] = hasDefaultValue
+          ? klona(field.def)
+          : null;
+      });
+      return doc;
+    },
     async preview() {
       if (!await this.confirmAndCancel()) {
         return;
       }
       window.location = this.original._url;
-    },
-    updateFieldState(fieldState) {
-      this.tabKey = cuid();
-      for (const key in this.groups) {
-        this.groups[key].fields.forEach(field => {
-          if (fieldState[field]) {
-            this.fieldErrors[key][field] = fieldState[field].error;
-          }
-        });
-      }
-      this.updateErrorCount();
-    },
-    updateErrorCount() {
-      let count = 0;
-      for (const key in this.fieldErrors) {
-        for (const tabKey in this.fieldErrors[key]) {
-          if (this.fieldErrors[key][tabKey]) {
-            count++;
-          }
-        }
-      }
-      this.errorCount = count;
-    },
-    focusNextError() {
-      let field;
-      for (const key in this.fieldErrors) {
-        for (const tabKey in this.fieldErrors[key]) {
-          if (this.fieldErrors[key][tabKey] && !field) {
-            field = this.schema.filter(item => {
-              return item.name === tabKey;
-            })[0];
-
-            if (field.group.name !== 'utility') {
-              this.switchPane(field.group.name);
-            }
-
-            this.getAposSchema(field).scrollFieldIntoView(field.name);
-          }
-        }
-      }
-    },
-    prepErrors() {
-      for (const name in this.groups) {
-        this.fieldErrors[name] = {};
-      }
     },
     // Implementing a method expected by the advisory lock mixin
     lockNotAvailable() {
@@ -557,7 +506,7 @@ export default {
       await this.loadDoc();
     },
     async onSave(navigate = false) {
-      if (this.moduleOptions.canPublish || !this.manuallyPublished) {
+      if (this.canPublish || !this.manuallyPublished) {
         await this.save({
           andPublish: this.manuallyPublished,
           navigate
@@ -623,6 +572,7 @@ export default {
       }
       let doc;
       try {
+        await this.postprocess();
         doc = await requestMethod(route, {
           busy: true,
           body,
@@ -716,7 +666,7 @@ export default {
       });
     },
     updateDocFields(value) {
-      this.updateFieldState(value.fieldState);
+      this.updateFieldErrors(value.fieldState);
       this.docFields.data = {
         ...this.docFields.data,
         ...value.data
@@ -738,16 +688,17 @@ export default {
       // Powers the dropdown Save menu
       // all actions expected to be methods of this component
       // Needs to be manually computed because this.saveLabel doesn't stay reactive when part of an object
-      const typeLabel = this.moduleOptions
-        ? this.moduleOptions.label.toLowerCase()
-        : 'document';
+      const typeLabel = this.$t(this.moduleOptions
+        ? this.moduleOptions.label
+        : 'document');
       const isNew = !this.docId;
       // this.original takes a moment to populate, don't crash
       const canPreview = this.original && (this.original._id ? this.original._url : this.original._previewable);
       const canNew = this.moduleOptions.showCreate;
+      const isSingleton = this.moduleOptions.singleton;
       const description = {
         saveLabel: this.$t(this.saveLabel),
-        typeLabel: this.$t(typeLabel)
+        typeLabel
       };
       const menu = [
         {
@@ -755,7 +706,8 @@ export default {
           action: 'onSave',
           description: {
             ...description,
-            key: isNew ? 'apostrophe:insertAndReturn' : 'apostrophe:updateAndReturn'
+            key: isSingleton ? 'apostrophe:updateSingleton'
+              : (isNew ? 'apostrophe:insertAndReturn' : 'apostrophe:updateAndReturn')
           },
           def: true
         }
@@ -777,7 +729,8 @@ export default {
         menu.push({
           label: {
             key: 'apostrophe:takeActionAndCreateNew',
-            saveLabel: this.$t(this.saveLabel)
+            saveLabel: this.$t(this.saveLabel),
+            typeLabel
           },
           action: 'onSaveAndNew',
           description: {
@@ -795,18 +748,25 @@ export default {
       }
       if (this.manuallyPublished && canPreview) {
         menu.push({
-          label: 'apostrophe:saveDraftAndPreview',
+          label: {
+            key: 'apostrophe:saveDraftAndPreview',
+            typeLabel
+          },
           action: 'onSaveDraftAndView',
-          description: 'apostrophe:saveDraftAndPreviewDescription',
-          typeLabel: this.$t(typeLabel)
+          description: {
+            key: 'apostrophe:saveDraftAndPreviewDescription',
+            typeLabel
+          }
         });
       };
       if (this.manuallyPublished && canNew) {
         menu.push({
           label: 'apostrophe:saveDraftAndCreateNew',
           action: 'onSaveDraftAndNew',
-          description: 'apostrophe:saveDraftAndCreateNewDescription',
-          typeLabel: this.$t(typeLabel)
+          description: {
+            key: 'apostrophe:saveDraftAndCreateNewDescription',
+            typeLabel
+          }
         });
       }
       return menu;
@@ -815,7 +775,21 @@ export default {
       window.localStorage.setItem(this.savePreferenceName, pref);
     },
     onContentChanged(e) {
-      if ((e.action === 'archive') || (e.action === 'delete') || (e.action === 'revert-draft-to-published')) {
+      if (!e.doc || this.original?._id !== e.doc._id) {
+        return;
+      }
+      if (e.doc.type !== this.docType) {
+        this.docType = e.doc.type;
+      }
+      this.docFields.data = e.doc;
+      this.generation++;
+
+      if (
+        e.action === 'archive' ||
+        e.action === 'unpublish' ||
+        e.action === 'delete' ||
+        e.action === 'revert-draft-to-published'
+      ) {
         this.modal.showModal = false;
       }
     },
@@ -828,13 +802,13 @@ export default {
 
 <style lang="scss" scoped>
   .apos-doc-editor__body {
-    padding-top: 20px;
-    max-width: 90%;
-    margin-right: auto;
-    margin-left: auto;
+    padding-top: $spacing-double;
   }
 
   .apos-doc-editor__utility {
-    padding: 40px 20px;
+    padding: $spacing-quadruple $spacing-base;
+    @include media-up(lap) {
+      padding: $spacing-quadruple $spacing-double;
+    }
   }
 </style>

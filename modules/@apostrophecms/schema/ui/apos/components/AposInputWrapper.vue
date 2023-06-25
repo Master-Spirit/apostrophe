@@ -1,5 +1,11 @@
 <template>
-  <div class="apos-field__wrapper">
+  <div
+    class="apos-field__wrapper"
+    :class="{
+      [`apos-field__wrapper--${field.type}`]: true,
+      'apos-field__wrapper--full-width': field.type === 'array' && field.style === 'table'
+    }"
+  >
     <component :is="wrapEl" :class="classList">
       <div class="apos-field__info">
         <component
@@ -7,7 +13,7 @@
           class="apos-field__label"
           :is="labelEl" :for="uid"
         >
-          {{ $t(field.label) }}
+          {{ $t(label) }}
           <span v-if="field.required" class="apos-field__required">
             *
           </span>
@@ -31,11 +37,13 @@
             />
           </span>
         </component>
+        <!-- eslint-disable vue/no-v-html -->
         <p
           v-if="(field.help || field.htmlHelp) && !displayOptions.helpTooltip"
           class="apos-field__help"
           v-html="$t(field.help || field.htmlHelp)"
         />
+        <!-- eslint-enable vue/no-v-html -->
         <slot name="additional" />
       </div>
       <slot name="body" />
@@ -53,6 +61,13 @@
 // friends, which override the `body` slot
 export default {
   name: 'AposInputWrapper',
+  inject: {
+    originalDoc: {
+      default: () => ({
+        ref: null
+      })
+    }
+  },
   props: {
     field: {
       type: Object,
@@ -92,6 +107,19 @@ export default {
     };
   },
   computed: {
+    label () {
+      const { label, publishedLabel } = this.field;
+
+      if (
+        this.originalDoc.ref &&
+        this.originalDoc.ref.lastPublishedAt &&
+        publishedLabel
+      ) {
+        return publishedLabel;
+      }
+
+      return label;
+    },
     classList: function () {
       const classes = [
         'apos-field',
@@ -152,6 +180,9 @@ export default {
 <style lang="scss" scoped>
 .apos-field__wrapper {
   position: relative;
+}
+.apos-field__wrapper.apos-field__wrapper--full-width {
+  max-width: 100%;
 }
 
 .apos-field {

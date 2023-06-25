@@ -1,10 +1,10 @@
-const t = require('../test-lib/test.js');
-const assert = require('assert');
-const _ = require('lodash');
-const cuid = require('cuid');
+const assert = require('assert').strict;
 const fs = require('fs');
 const path = require('path');
+const _ = require('lodash');
+const cuid = require('cuid');
 const FormData = require('form-data');
+const t = require('../test-lib/test.js');
 
 let apos;
 let jar;
@@ -14,15 +14,11 @@ describe('Pieces', function() {
 
   this.timeout(t.timeout);
 
-  after(async function () {
-    return t.destroy(apos);
-  });
+  let editor;
+  let contributor;
+  let guest;
 
-  /// ///
-  // EXISTENCE
-  /// ///
-
-  it('should initialize with a schema', async function() {
+  before(async function() {
     apos = await t.create({
       root: module,
 
@@ -217,9 +213,172 @@ describe('Pieces', function() {
               }
             }
           }
+        },
+        'product-page': {
+          extend: '@apostrophecms/piece-page-type',
+          options: {
+            name: 'productPage',
+            label: 'Products',
+            alias: 'productPage',
+            perPage: 10
+          }
+        },
+        '@apostrophecms/page': {
+          options: {
+            park: [
+              {
+                title: 'Products',
+                type: 'productPage',
+                slug: '/products',
+                parkedId: 'products'
+              }
+            ]
+          }
+        },
+        board: {
+          extend: '@apostrophecms/piece-type',
+          options: {
+            alias: 'board',
+            name: 'board',
+            label: 'Board',
+            editRole: 'contributor',
+            publishRole: 'admin'
+          },
+          fields: {
+            add: {
+              stock: {
+                name: 'stock',
+                type: 'integer',
+                label: 'stock',
+                permission: {
+                  action: 'edit',
+                  type: 'board'
+                }
+              },
+              discontinued: {
+                name: 'discontinued',
+                type: 'string',
+                label: 'Discontinued',
+                viewPermission: {
+                  action: 'publish',
+                  type: 'board'
+                }
+              },
+              nickname: {
+                name: 'nickname',
+                type: 'string',
+                label: 'nickname',
+                editPermission: {
+                  action: 'edit',
+                  type: 'board'
+                }
+              },
+              sku: {
+                name: 'sku',
+                type: 'string',
+                label: 'SKU',
+                editPermission: {
+                  action: 'publish',
+                  type: 'board'
+                }
+              },
+              hidden: {
+                name: 'hidden',
+                type: 'boolean',
+                label: 'Hidden?',
+                viewPermission: {
+                  action: 'publish',
+                  type: 'board'
+                },
+                editPermission: {
+                  action: 'publish',
+                  type: 'board'
+                }
+              },
+              _users: {
+                type: 'relationship',
+                label: 'users',
+                withType: '@apostrophecms/user',
+                required: true
+              },
+              array: {
+                type: 'array',
+                label: 'array',
+                viewPermission: {
+                  action: 'publish',
+                  type: 'board'
+                },
+                editPermission: {
+                  action: 'publish',
+                  type: 'board'
+                },
+                fields: {
+                  add: {
+                    title: {
+                      type: 'string',
+                      label: 'title',
+                      required: true
+                    },
+                    description: {
+                      type: 'string',
+                      label: 'description'
+                    },
+                    _users: {
+                      type: 'relationship',
+                      label: 'users',
+                      withType: '@apostrophecms/user',
+                      required: true
+                    }
+                  }
+                }
+              },
+              object: {
+                type: 'object',
+                label: 'object',
+                viewPermission: {
+                  action: 'publish',
+                  type: 'board'
+                },
+                editPermission: {
+                  action: 'publish',
+                  type: 'board'
+                },
+                fields: {
+                  add: {
+                    title: {
+                      type: 'string',
+                      label: 'title',
+                      required: true
+                    },
+                    description: {
+                      type: 'string',
+                      label: 'description'
+                    },
+                    _users: {
+                      type: 'relationship',
+                      label: 'users',
+                      withType: '@apostrophecms/user',
+                      required: true
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     });
+  });
+
+  after(function () {
+    return t.destroy(apos);
+  });
+
+  /// ///
+  // EXISTENCE
+  /// ///
+
+  it('should initialize with a schema', function() {
     assert(apos.modules.thing);
     assert(apos.modules.thing.schema);
   });
@@ -664,6 +823,40 @@ describe('Pieces', function() {
     assert(response.results.length === 5);
     assert(response.results[0]._id !== firstId);
     assert(response.pages === 2);
+  });
+
+  it('can GET the results sorted ascending', async function() {
+    const response = await apos.http.get('/api/v1/product?perPage=5&sort[title]=1', {
+      jar
+    });
+
+    const actual = response.results.map(result => result.title);
+    const expected = [
+      'Cool Product #1',
+      'Cool Product #10',
+      'Cool Product #2',
+      'Cool Product #3',
+      'Cool Product #4'
+    ];
+
+    assert.deepEqual(actual, expected);
+  });
+
+  it('can GET the results sorted descending', async function() {
+    const response = await apos.http.get('/api/v1/product?perPage=5&sort[title]=-1', {
+      jar
+    });
+
+    const actual = response.results.map(result => result.title);
+    const expected = [
+      'Cool Product #9',
+      'Cool Product #8',
+      'Cool Product #7',
+      'Cool Product #6',
+      'Cool Product #5'
+    ];
+
+    assert.deepEqual(actual, expected);
   });
 
   it('can update a product with PUT', async function() {
@@ -1610,5 +1803,708 @@ describe('Pieces', function() {
     assert(eTagParts[1] !== (new Date(response.body.cacheInvalidatedAt)).getTime().toString());
 
     delete apos.thing.options.cache;
+  });
+
+  describe('unpublish', function() {
+    const baseItem = {
+      aposDocId: 'some-product',
+      type: 'product',
+      slug: '/some-product',
+      visibility: 'public'
+    };
+    const draftItem = {
+      ...baseItem,
+      _id: 'some-product:en:draft',
+      aposLocale: 'en:draft'
+    };
+    const publishedItem = {
+      ...baseItem,
+      _id: 'some-product:en:published',
+      aposLocale: 'en:published'
+    };
+    const previousItem = {
+      ...baseItem,
+      _id: 'some-product:en:previous',
+      aposLocale: 'en:previous'
+    };
+
+    let draft;
+    let published;
+    let previous;
+
+    this.beforeEach(async function() {
+      await apos.doc.db.insertMany([
+        draftItem,
+        publishedItem,
+        previousItem
+      ]);
+
+      draft = await apos.http.post(
+        `/api/v1/product/${publishedItem._id}/unpublish?apiKey=${apiKey}`,
+        {
+          body: {},
+          busy: true
+        }
+      );
+
+      published = await apos.doc.db.findOne({ _id: 'some-product:en:published' });
+      previous = await apos.doc.db.findOne({ _id: 'some-product:en:previous' });
+    });
+
+    this.afterEach(async function() {
+      await apos.doc.db.deleteMany({
+        aposDocId: 'some-product'
+      });
+    });
+
+    it('should remove the published and previous versions of a piece', function() {
+      assert(published === null);
+      assert(previous === null);
+    });
+
+    it('should update the draft version of a piece', function() {
+      assert(draft._id === draftItem._id);
+      assert(draft.modified === true);
+      assert(draft.lastPublishedAt === null);
+    });
+  });
+
+  describe('draft sharing', function() {
+    const product = {
+      _id: 'some-product:en:published',
+      aposDocId: 'some-product',
+      title: 'Some Product'
+    };
+
+    let req;
+    let previousDraft;
+    let previousPublished;
+    let shareResponse;
+
+    const generatePublicUrl = shareResponse =>
+      `${shareResponse._url}?aposShareKey=${encodeURIComponent(shareResponse.aposShareKey)}&aposShareId=${encodeURIComponent(shareResponse._id)}`;
+
+    this.beforeEach(async function() {
+      req = apos.task.getReq();
+      previousPublished = await apos.modules.product.insert(req, product);
+      previousDraft = await apos.modules.product.findOneForEditing(
+        apos.task.getReq({ mode: 'draft' }),
+        { _id: 'some-product:en:draft' }
+      );
+      await apos.modules.product.update(req, {
+        ...previousDraft,
+        title: 'Some Product EDITED'
+      });
+    });
+
+    this.afterEach(async function() {
+      await apos.doc.db.deleteMany({ aposDocId: product.aposDocId });
+    });
+
+    describe('share', function() {
+      this.beforeEach(async function() {
+        shareResponse = await apos.modules.product.share(req, previousDraft);
+      });
+
+      it('should have a "share" method that returns a draft with aposShareKey', async function() {
+        const draft = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:draft`
+        });
+        const published = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:published`
+        });
+
+        assert(apos.modules.product.share);
+        assert(!Object.prototype.hasOwnProperty.call(published, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(previousDraft, 'aposShareKey'));
+        assert(shareResponse.aposShareKey);
+        assert(draft.aposShareKey);
+        assert(shareResponse.aposShareKey === draft.aposShareKey);
+      });
+
+      it('should grant public access to a draft after having enabled draft sharing', async function() {
+        const publicUrl = generatePublicUrl(shareResponse);
+
+        const response = await apos.http.get(shareResponse._url, { fullResponse: true });
+        const publicResponse = await apos.http.get(publicUrl, { fullResponse: true });
+
+        assert(response.status === 200);
+        assert(response.body.includes('Some Product'));
+        assert(!response.body.includes('Some Product EDITED'));
+
+        assert(publicResponse.status === 200);
+        assert(publicResponse.body.includes('Some Product EDITED'));
+      });
+
+      it('should grant public access to a draft without admin UI, even when logged-in', async function() {
+        const publicUrl = generatePublicUrl(shareResponse);
+        const publicResponse = await apos.http.get(publicUrl, {
+          fullResponse: true,
+          jar
+        });
+
+        assert(publicResponse.status === 200);
+        assert(publicResponse.body.includes('Some Product EDITED'));
+        assert(!publicResponse.body.includes('apos-admin-bar'));
+      });
+
+      it('should grant public access to a draft after having re-enabled draft sharing', async function() {
+        await apos.modules.product.unshare(req, previousDraft);
+
+        const shareResponse = await apos.modules.product.share(req, previousDraft);
+        const publicUrl = generatePublicUrl(shareResponse);
+
+        const publicResponse = await apos.http.get(publicUrl, { fullResponse: true });
+
+        assert(publicResponse.status === 200);
+        assert(publicResponse.body.includes('Some Product EDITED'));
+      });
+    });
+
+    describe('unshare', function() {
+      this.beforeEach(async function() {
+        shareResponse = await apos.modules.product.share(req, previousDraft);
+      });
+
+      it('should have a "unshare" method that returns a draft without aposShareKey', async function() {
+        const unshareResponse = await apos.modules.product.unshare(req, previousDraft);
+
+        const draft = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:draft`
+        });
+        const published = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:published`
+        });
+
+        assert(apos.modules.product.unshare);
+        assert(!Object.prototype.hasOwnProperty.call(previousPublished, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(previousDraft, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(published, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(draft, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(unshareResponse, 'aposShareKey'));
+      });
+
+      it('should remove public access to a draft after having disabled draft sharing', async function() {
+        await apos.modules.product.unshare(req, previousDraft);
+
+        try {
+          const publicUrl = generatePublicUrl(shareResponse);
+          await apos.http.get(publicUrl, { fullResponse: true });
+        } catch (error) {
+          assert(error.status === 404);
+          return;
+        }
+        throw new Error('should have thrown 404 error');
+      });
+    });
+  });
+
+  describe('field viewPermission|editPermission', function() {
+
+    this.afterEach(async function() {
+      await apos.doc.db.deleteMany({ email: /@admin.io$/ });
+      await apos.db.collection('aposUsersSafe').deleteMany({ email: /@admin.io$/ });
+      await apos.doc.db.deleteMany({ type: 'board' });
+    });
+
+    context('admin', function() {
+      it('getBrowserData', async function() {
+        const req = apos.task.getReq();
+        const { schema } = await apos.modules.board.getBrowserData(req);
+
+        const actual = schema.map(field => field.name);
+        const expected = [
+          'title',
+          'slug',
+          'visibility',
+          'archived',
+          'stock',
+          'discontinued',
+          'nickname',
+          'sku',
+          'hidden',
+          '_users',
+          'array',
+          'object'
+        ];
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to retrieve fields with viewPermission when having appropriate credentials on rest API', async function() {
+        // admin user was inserted earlier
+        const jar = await t.loginAs(apos, 'admin');
+
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const board = await apos.http.get(`/api/v1/board/${inserted._id}`, { jar });
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to edit fields with editPermission when having appropriate credentials on rest API', async function() {
+        const jar = await t.loginAs(apos, 'admin');
+        editor = await t.createUser(apos, 'editor');
+
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077',
+          nickname: 'flex',
+          sku: 'LI',
+          hidden: false,
+          _users: [ editor ],
+          array: [
+            {
+              title: '01',
+              description: 'one',
+              _users: [ editor ]
+            }
+          ],
+          object: {
+            title: '01',
+            description: 'one',
+            _users: [ editor ]
+          }
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        await apos.http.get(`/api/v1/board/${inserted._id}`, { jar });
+        const board = await apos.http.put(
+          `/api/v1/board/${inserted._id}`,
+          {
+            body: {
+              ...inserted,
+              slug: 'board-icarus',
+              stock: 77,
+              discontinued: 'May 2049',
+              nickname: 'f1',
+              sku: 'LO-IC',
+              hidden: true
+            },
+            jar
+          }
+        );
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued,
+          nickname: board.nickname,
+          sku: board.sku,
+          hidden: board.hidden
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'board-icarus',
+          stock: 77,
+          discontinued: 'May 2049',
+          nickname: 'f1',
+          sku: 'LO-IC',
+          hidden: true
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to retrieve all fields when using find', async function() {
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const board = await apos.modules.board.find(apos.task.getAdminReq(), { _id: inserted._id }).toObject();
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+    });
+
+    context('editor', function() {
+      it('getBrowserData', async function() {
+        const req = apos.task.getEditorReq();
+        const { schema } = await apos.modules.board.getBrowserData(req);
+
+        const actual = schema.map(field => field.name);
+        const expected = [
+          'title',
+          'slug',
+          'visibility',
+          'archived',
+          'stock',
+          'nickname',
+          '_users'
+        ];
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to retrieve fields with viewPermission when having appropriate credentials', async function() {
+        const jar = await t.loginAs(apos, 'editor');
+
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const board = await apos.http.get(`/api/v1/board/${inserted._id}`, { jar });
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: undefined
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to edit fields with editPermission when having appropriate credentials on rest API', async function() {
+        const jar = await t.loginAs(apos, 'editor');
+
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077',
+          nickname: 'flex',
+          sku: 'LI',
+          hidden: false
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        await apos.http.get(`/api/v1/board/${inserted._id}`, { jar });
+        const board = await apos.http.put(
+          `/api/v1/board/${inserted._id}`,
+          {
+            body: {
+              ...inserted,
+              slug: 'board-icarus',
+              stock: 77,
+              discontinued: 'May 2049',
+              nickname: 'f1',
+              sku: 'LO-IC',
+              hidden: true
+            },
+            jar
+          }
+        );
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued,
+          nickname: board.nickname,
+          sku: board.sku,
+          hidden: board.hidden
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'board-icarus',
+          stock: 77,
+          discontinued: 'April 2077',
+          nickname: 'f1',
+          sku: 'LI',
+          hidden: false
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to retrieve all fields when using find', async function() {
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const board = await apos.modules.board.find(apos.task.getEditorReq(), { _id: inserted._id }).toObject();
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+    });
+
+    context('contributor', function() {
+      it('getBrowserData', async function() {
+        const req = apos.task.getContributorReq();
+        const { schema } = await apos.modules.board.getBrowserData(req);
+
+        const actual = schema.map(field => field.name);
+        const expected = [
+          'title',
+          'slug',
+          'visibility',
+          'archived',
+          '_users'
+        ];
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to retrieve fields with viewPermission when having appropriate credentials', async function() {
+        contributor = await t.createUser(apos, 'contributor');
+        const jar = await t.loginAs(apos, 'contributor');
+
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const board = await apos.http.get(`/api/v1/board/${inserted._id}`, { jar });
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: undefined
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to edit fields with editPermission when having appropriate credentials on rest API', async function() {
+        const jar = await t.loginAs(apos, 'contributor');
+
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077',
+          nickname: 'flex',
+          sku: 'LI',
+          hidden: false
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const found = await apos.http.get(`/api/v1/board/${inserted._id.replace('published', 'draft')}`, { jar });
+        const board = await apos.http.put(
+          `/api/v1/board/${found._id}`,
+          {
+            body: {
+              ...found,
+              slug: 'board-icarus',
+              stock: 77,
+              discontinued: 'May 2049',
+              nickname: 'f1',
+              sku: 'LO-IC',
+              hidden: true
+            },
+            jar
+          }
+        );
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued,
+          nickname: board.nickname,
+          sku: board.sku,
+          hidden: board.hidden
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'board-icarus',
+          stock: 77,
+          discontinued: 'April 2077',
+          nickname: 'f1',
+          sku: 'LI',
+          hidden: false
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to retrieve all fields when using find', async function() {
+        const req = apos.task.getReq();
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const board = await apos.modules.board.find(apos.task.getContributorReq(), { _id: inserted._id }).toObject();
+
+        const actual = {
+          title: board.title,
+          slug: board.slug,
+          stock: board.stock,
+          discontinued: board.discontinued
+        };
+        const expected = {
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077'
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+
+      it('should be able to edit with permission checks during prepareForStorage & updateCacheField handlers', async function() {
+        const jar = await t.loginAs(apos, 'contributor');
+
+        guest = await t.createUser(apos, 'guest');
+
+        const req = apos.task.getReq({ mode: 'draft' });
+
+        const candidate = {
+          ...apos.modules.board.newInstance(),
+          title: 'Icarus',
+          slug: 'icarus',
+          stock: 99,
+          discontinued: 'April 2077',
+          nickname: 'flex',
+          sku: 'LI',
+          hidden: false,
+          _users: [ editor ],
+          array: [
+            {
+              title: '01',
+              description: 'one',
+              _users: [ editor ]
+            }
+          ],
+          object: {
+            title: '01',
+            description: 'one',
+            _users: [ editor ]
+          }
+        };
+        const inserted = await apos.modules.board.insert(req, candidate);
+        const insertedDraft = await apos.modules.board.find(apos.task.getReq({ mode: 'draft' }), { _id: inserted._id.replace('published', 'draft') }).toObject();
+        const found = await apos.http.get(`/api/v1/board/${insertedDraft._id}`, { jar });
+        const updated = await apos.http.put(
+          `/api/v1/board/${found._id}`,
+          {
+            body: {
+              ...found,
+              stock: 77,
+              _users: [ guest ],
+              array: [
+                {
+                  title: '02',
+                  _users: [ guest ]
+                }
+              ],
+              object: {
+                title: '02',
+                _users: [ guest ]
+              }
+            },
+            jar
+          }
+        );
+
+        const expectedUsers = insertedDraft.object._users.map(user => ({
+          ...user,
+          cacheInvalidatedAt: new Date(updated.cacheInvalidatedAt)
+        }));
+
+        const actual = await apos.modules.board.find(apos.task.getReq({ mode: 'draft' }), { _id: updated._id }).toObject();
+        const expected = {
+          ...insertedDraft,
+          _users: expectedUsers,
+          stock: 77,
+          cacheInvalidatedAt: new Date(updated.cacheInvalidatedAt),
+          updatedAt: new Date(updated.updatedAt),
+          updatedBy: {
+            _id: contributor._id,
+            title: contributor.title,
+            username: contributor.username
+          },
+          array: insertedDraft.array.map(item => ({
+            ...item,
+            _users: expectedUsers
+          })),
+          object: {
+            ...insertedDraft.object,
+            _users: expectedUsers
+          }
+        };
+
+        assert.deepEqual(actual, expected);
+      });
+    });
   });
 });

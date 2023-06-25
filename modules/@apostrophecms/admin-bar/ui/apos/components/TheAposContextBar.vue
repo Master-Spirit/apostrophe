@@ -3,8 +3,8 @@
     <template v-if="contextBarActive">
       <TheAposContextUndoRedo
         :v-if="editMode"
-        :patches-since-loaded="patchesSinceLoaded"
-        :undone="undone"
+        :can-undo="canUndo"
+        :can-redo="canRedo"
         @undo="undo"
         @redo="redo"
         :retrying="retrying"
@@ -79,10 +79,11 @@ export default {
   },
   computed: {
     contextBarActive() {
-      return window.apos.adminBar.contextBar && this.canEdit;
+      return window.apos.adminBar.contextBar && (this.canEdit || this.moduleOptions.canLocalize);
     },
     canEdit() {
-      return this.context._edit || ((this.context.aposLocale && this.context.aposLocale.endsWith(':published')) && this.draftIsEditable);
+      return this.context._edit || ((this.context.aposLocale && this.context.aposLocale.endsWith(':published')) &&
+        this.draftIsEditable);
     },
     classes() {
       if (!this.contextBarActive) {
@@ -98,7 +99,7 @@ export default {
       return !!this.patchesSinceSave.length;
     },
     canPublish() {
-      return apos.modules[this.context.type].canPublish;
+      return this.context._publish || apos.modules[this.context.type].canPublish;
     },
     readyToPublish() {
       if (this.canPublish) {
@@ -122,6 +123,12 @@ export default {
     },
     customPublishLabel() {
       return (this.hasCustomUi && apos.modules[this.context.type].publishLabel) || null;
+    },
+    canUndo() {
+      return this.patchesSinceLoaded.length > 0;
+    },
+    canRedo() {
+      return this.undone.length > 0;
     }
   },
   watch: {
@@ -131,7 +138,6 @@ export default {
   },
   async mounted() {
     apos.bus.$on('revert-published-to-previous', this.onRevertPublishedToPrevious);
-    apos.bus.$on('unpublish', this.onUnpublish);
     apos.bus.$on('set-context', this.onSetContext);
     apos.bus.$on('push-context', this.onPushContext);
     apos.bus.$on('pop-context', this.onPopContext);
@@ -286,7 +292,7 @@ export default {
         }, 1100);
       }
     },
-    async onPublish(e) {
+    async onPublish() {
       if (!this.canPublish) {
         const submitted = await this.submitDraft(this.context);
         if (submitted) {
@@ -463,7 +469,6 @@ export default {
       }
     },
     async onContentChanged(e) {
-
       if (
         (e.doc && (e.doc._id === this.context._id)) ||
         (e.docIds && e.docIds.includes(this.context._id))
@@ -479,9 +484,15 @@ export default {
           });
         }
       }
-      await this.refresh({
-        scrollcheck: e.action === 'history'
-      });
+      const refreshOptions = {
+        refresh: true
+      };
+      apos.bus.$emit('apos-refreshing', refreshOptions);
+      if (refreshOptions.refresh) {
+        await this.refresh({
+          scrollcheck: e.action === 'history'
+        });
+      }
     },
     async switchEditMode(editing) {
       this.editMode = editing;
@@ -500,7 +511,33 @@ export default {
       }
     },
     async refresh(options = {}) {
-      let url = window.location.href;
+      const refreshable = document.querySelector('[data-apos-refreshable]');
+      if (options.scrollcheck) {
+        window.apos.adminBar.scrollPosition = {
+          x: window.scrollX,
+          y: window.scrollY
+        };
+      }
+
+      if (!refreshable) {
+        apos.bus.$emit('refreshed');
+        this.rememberLastBaseContext();
+        return;
+      }
+
+      const { action } = window.apos.modules[this.context.type];
+      const doc = await apos.http.get(`${action}/${this.context.aposDocId}`, {
+        qs: {
+          aposMode: this.draftMode,
+          project: { _url: 1 }
+        }
+      });
+
+      if (this.urlDiffers(doc._url)) {
+        // Slug changed, change browser URL to reflect the actual url of the doc
+        history.replaceState(null, '', doc._url);
+      }
+
       const qs = {
         ...apos.http.parseQuery(window.location.search),
         aposRefresh: '1',
@@ -509,48 +546,40 @@ export default {
           aposEdit: '1'
         } : {})
       };
-      url = apos.http.addQueryToUrl(url, qs);
-      const content = await apos.http.get(url, {
+
+      const content = await apos.http.get(doc._url, {
         qs,
         headers: {
           'Cache-Control': 'no-cache'
         },
         draft: true,
-        busy: true
+        busy: true,
+        prefix: false
       });
-      const refreshable = document.querySelector('[data-apos-refreshable]');
 
-      if (options.scrollcheck) {
-        window.apos.adminBar.scrollPosition = {
-          x: window.scrollX,
-          y: window.scrollY
-        };
-      }
+      refreshable.innerHTML = content;
 
-      if (refreshable) {
-        refreshable.innerHTML = content;
-        if (this.editMode && (!this.original)) {
-          // the first time we enter edit mode on the page, we need to
-          // establish a baseline for undo/redo. Use our
-          // "@ notation" PATCH feature. Sort the areas by DOM depth
-          // to ensure parents patch before children
-          this.original = {};
-          const els = Array.from(document.querySelectorAll('[data-apos-area-newly-editable]')).filter(el => el.getAttribute('data-doc-id') === this.context._id);
-          els.sort((a, b) => {
-            const da = depth(a);
-            const db = depth(b);
-            if (da < db) {
-              return -1;
-            } else if (db > da) {
-              return 1;
-            } else {
-              return 0;
-            }
-          });
-          for (const el of els) {
-            const data = JSON.parse(el.getAttribute('data'));
-            this.original[`@${data._id}`] = data;
+      if (this.editMode && (!this.original)) {
+        // the first time we enter edit mode on the page, we need to
+        // establish a baseline for undo/redo. Use our
+        // "@ notation" PATCH feature. Sort the areas by DOM depth
+        // to ensure parents patch before children
+        this.original = {};
+        const els = Array.from(document.querySelectorAll('[data-apos-area-newly-editable]')).filter(el => el.getAttribute('data-doc-id') === this.context._id);
+        els.sort((a, b) => {
+          const da = depth(a);
+          const db = depth(b);
+          if (da < db) {
+            return -1;
+          } else if (db > da) {
+            return 1;
+          } else {
+            return 0;
           }
+        });
+        for (const el of els) {
+          const data = JSON.parse(el.getAttribute('data'));
+          this.original[`@${data._id}`] = data;
         }
       }
       apos.bus.$emit('refreshed');
@@ -598,44 +627,17 @@ export default {
         });
       }
     },
-    async onUnpublish(data) {
-      try {
-        await apos.http.post(`${data.action}/${data._id}/unpublish`, {
-          body: {},
-          busy: true
-        });
-        apos.notify('apostrophe:noLongerPublished', {
-          type: 'success',
-          dismiss: true
-        });
-        // This handler covers the modals too, so make sure it's
-        // for the context document before altering any admin bar state
-        // because of it
-        if (data._id.replace(/:.*$/, '') === (this.context._id.replace(/:.*$/, ''))) {
-          this.context = {
-            ...this.context,
-            modified: true,
-            lastPublishedAt: null
-          };
-          // No refresh is needed here because we're still in draft mode
-          // looking at the draft mode, and the thing that changed is the
-          // published mode
-        }
-      } catch (e) {
-        await apos.alert({
-          heading: this.$t('apostrophe:error'),
-          description: e.message || this.$t('apostrophe:errorWhileUnpublishing'),
-          localize: false
-        });
+    async undo() {
+      if (this.canUndo) {
+        this.undone.push(this.patchesSinceLoaded.pop());
+        await this.refreshAfterHistoryChange('apostrophe:undoFailed');
       }
     },
-    async undo() {
-      this.undone.push(this.patchesSinceLoaded.pop());
-      await this.refreshAfterHistoryChange('apostrophe:undoFailed');
-    },
     async redo() {
-      this.patchesSinceLoaded.push(this.undone.pop());
-      await this.refreshAfterHistoryChange('apostrophe:redoFailed');
+      if (this.canRedo) {
+        this.patchesSinceLoaded.push(this.undone.pop());
+        await this.refreshAfterHistoryChange('apostrophe:redoFailed');
+      }
     },
     async refreshAfterHistoryChange(errorMessageKey) {
       this.saving = true;

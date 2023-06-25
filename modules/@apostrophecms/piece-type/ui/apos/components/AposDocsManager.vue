@@ -18,11 +18,9 @@
       />
     </template>
     <template #primaryControls>
-      <AposContextMenu
-        v-if="utilityOperations.menu.length"
-        :button="utilityOperations.button"
-        :menu="utilityOperations.menu"
-        @item-clicked="utilityOperationsHandler"
+      <AposUtilityOperations
+        :module-options="moduleOptions"
+        :has-relationship-field="!!relationshipField"
       />
       <AposButton
         v-if="relationshipField"
@@ -54,7 +52,7 @@
             @input="setCheckedDocs"
             @item-clicked="editRelationship"
             :value="checkedDocs"
-            :has-relationship-schema="!!(relationshipField && relationshipField.schema)"
+            :relationship-schema="relationshipField?.schema"
           />
         </div>
       </AposModalRail>
@@ -75,7 +73,7 @@
             :checked-count="checked.length"
             :batch-operations="moduleOptions.batchOperations"
             @select-click="selectAll"
-            @search="search"
+            @search="onSearch"
             @page-change="updatePage"
             @filter="filter"
             @batch="handleBatchAction"
@@ -121,6 +119,7 @@
 import AposDocsManagerMixin from 'Modules/@apostrophecms/modal/mixins/AposDocsManagerMixin';
 import AposModifiedMixin from 'Modules/@apostrophecms/ui/mixins/AposModifiedMixin';
 import AposPublishMixin from 'Modules/@apostrophecms/ui/mixins/AposPublishMixin';
+import { debounce } from 'Modules/@apostrophecms/ui/utils';
 
 export default {
   name: 'AposDocsManager',
@@ -147,17 +146,10 @@ export default {
       totalPages: 1,
       currentPage: 1,
       filterValues: {},
-      queryExtras: {},
-      holdQueries: false,
-      utilityOperations: {
-        button: {
-          label: 'apostrophe:moreOperations',
-          iconOnly: true,
-          icon: 'dots-vertical-icon',
-          type: 'outline'
-        },
-        menu: []
+      queryExtras: {
+        viewContext: this.relationshipField ? 'relationship' : 'manage'
       },
+      holdQueries: false,
       filterChoices: {},
       allPiecesSelection: {
         isSelected: false,
@@ -220,6 +212,9 @@ export default {
     }
   },
   created() {
+    const DEBOUNCE_TIMEOUT = 500;
+    this.onSearch = debounce(this.search, DEBOUNCE_TIMEOUT);
+
     this.moduleOptions.filters.forEach(filter => {
       this.filterValues[filter.name] = filter.def;
       if (!filter.choices) {
@@ -233,25 +228,20 @@ export default {
     this.headers = this.computeHeaders();
     // Get the data. This will be more complex in actuality.
     this.modal.active = true;
-    this.setUtilityOperations();
     await this.getPieces();
     await this.getAllPiecesTotal();
 
     apos.bus.$on('content-changed', this.getPieces);
+    apos.bus.$on('command-menu-manager-create-new', this.create);
+    apos.bus.$on('command-menu-manager-close', this.confirmAndCancel);
   },
   destroyed() {
     this.destroyShortcuts();
     apos.bus.$off('content-changed', this.getPieces);
+    apos.bus.$off('command-menu-manager-create-new', this.create);
+    apos.bus.$off('command-menu-manager-close', this.confirmAndCancel);
   },
   methods: {
-    utilityOperationsHandler(action) {
-      if (action === 'new') {
-        this.create();
-        return;
-      }
-
-      this.handleUtilityOperation(action);
-    },
     setCheckedDocs(checked) {
       this.checkedDocs = checked;
       this.checked = this.checkedDocs.map(item => {
@@ -260,28 +250,6 @@ export default {
     },
     async create() {
       await this.edit(null);
-    },
-    async handleUtilityOperation(action) {
-      const operation = this.utilityOperations.menu
-        .find((op) => op.action === action);
-
-      if (!operation) {
-        return;
-      }
-
-      const {
-        modal, ...modalOptions
-      } = operation.modalOptions || {};
-
-      if (modal) {
-        await apos.modal.execute(modal, {
-          moduleAction: this.moduleOptions.action,
-          action,
-          labels: this.moduleLabels,
-          messages: operation.messages,
-          ...modalOptions
-        });
-      }
     },
 
     // If pieceOrId is null, a new piece is created
@@ -348,6 +316,10 @@ export default {
       const {
         currentPage, pages, results, choices
       } = await this.request({
+        ...(
+          this.moduleOptions.managerApiProjection &&
+          { project: this.moduleOptions.managerApiProjection }
+        ),
         page: this.currentPage
       });
 
@@ -414,7 +386,7 @@ export default {
       this.setCheckedDocs([]);
     },
     shortcutNew(event) {
-      const interesting = (event.keyCode === 78 || event.keyCode === 67); // C(reate) or N(ew)
+      const interesting = event.keyCode === 78; // N(ew)
       const topModal = apos.modal.stack[apos.modal.stack.length - 1] ? apos.modal.stack[apos.modal.stack.length - 1].id : null;
       if (
         interesting &&
@@ -488,24 +460,6 @@ export default {
           console.error(error);
         }
       }
-    },
-    setUtilityOperations () {
-      const { utilityOperations } = this.moduleOptions;
-
-      const newPiece = {
-        action: 'new',
-        label: {
-          key: 'apostrophe:newDocType',
-          type: this.$t(this.moduleLabels.singular)
-        }
-      };
-
-      this.utilityOperations.menu = [
-        ...this.relationshipField && this.moduleOptions.canEdit
-          ? [ newPiece ] : [],
-        ...this.utilityOperations.menu,
-        ...(!this.relationshipField && Array.isArray(utilityOperations) && utilityOperations) || []
-      ];
     }
   }
 };

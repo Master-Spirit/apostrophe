@@ -1,7 +1,7 @@
 <template>
   <AposModal
     class="apos-array-editor" :modal="modal"
-    :modal-title="`Edit ${field.label}`"
+    :modal-title="modalTitle"
     @inactive="modal.active = false" @show-modal="modal.showModal = true"
     @esc="confirmAndCancel" @no-modal="$emit('safe-close')"
   >
@@ -64,7 +64,6 @@
                     v-if="currentId"
                     :schema="schema"
                     :trigger-validation="triggerValidation"
-                    :utility-rail="false"
                     :following-values="followingValues()"
                     :conditional-fields="conditionalFields()"
                     :value="currentDoc"
@@ -72,6 +71,7 @@
                     @validate="triggerValidate"
                     :server-errors="currentDocServerErrors"
                     ref="schema"
+                    :doc-id="docId"
                   />
                 </div>
               </div>
@@ -109,10 +109,24 @@ export default {
     serverError: {
       type: Object,
       default: null
+    },
+    docId: {
+      type: String,
+      default: null
+    },
+    parentFollowingValues: {
+      type: Object,
+      default: null
     }
   },
   emits: [ 'modal-result', 'safe-close' ],
   data() {
+    // Automatically add `_id` to default items
+    const items = this.items.map(item => ({
+      ...item,
+      _id: item._id || cuid()
+    }));
+
     return {
       currentId: null,
       currentDoc: null,
@@ -121,11 +135,16 @@ export default {
         type: 'overlay',
         showModal: false
       },
+      modalTitle: {
+        key: 'apostrophe:editType',
+        type: this.$t(this.field.label)
+      },
+      titleFieldChoices: null,
       // If we don't clone, then we're making
       // permanent modifications whether the user
       // clicks save or not
-      next: klona(this.items),
-      original: klona(this.items),
+      next: klona(items),
+      original: klona(items),
       triggerValidation: false,
       minError: false,
       maxError: false,
@@ -210,6 +229,8 @@ export default {
       await this.nextTick();
       aposSchema.scrollFieldIntoView(name);
     }
+    this.titleFieldChoices = await this.getTitleFieldChoices();
+
   },
   methods: {
     async select(_id) {
@@ -354,7 +375,19 @@ export default {
     label(item) {
       let candidate;
       if (this.field.titleField) {
+
+        // Initial field value
         candidate = get(item, this.field.titleField);
+
+        // If the titleField references a select input, use the
+        // select label as the slat label, rather than the value.
+        if (this.titleFieldChoices) {
+          const choice = this.titleFieldChoices.find(choice => choice.value === candidate);
+          if (choice && choice.label) {
+            candidate = choice.label;
+          }
+        }
+
       } else if (this.schema.find(field => field.name === 'title') && (item.title !== undefined)) {
         candidate = item.title;
       }
@@ -374,6 +407,42 @@ export default {
         title: this.label(item)
       }));
       return result;
+    },
+    async getTitleFieldChoices() {
+      // If the titleField references a select input, get it's choices
+      // to use as labels for the slat UI
+
+      let choices = null;
+      const titleField = this.schema.find(field => field.name === this.field.titleField);
+
+      // The titleField is a select
+      if (titleField?.choices) {
+
+        // Choices are provided by a method
+        if (typeof titleField.choices === 'string') {
+          const action = `${this.moduleOptions.action}/choices`;
+          try {
+            const result = await apos.http.get(
+              action,
+              {
+                qs: {
+                  fieldId: titleField._id
+                }
+              }
+            );
+            if (result && result.choices) {
+              choices = result.choices;
+            }
+          } catch (e) {
+            console.error(this.$t('apostrophe:errorFetchingTitleFieldChoicesByMethod', { name: titleField.name }));
+          }
+
+        // Choices are a normal, hardcoded array
+        } else if (Array.isArray(titleField.choices)) {
+          choices = titleField.choices;
+        }
+      }
+      return choices;
     }
   }
 };

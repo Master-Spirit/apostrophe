@@ -55,6 +55,13 @@ let defaults = require('./defaults.js');
 // If set, Apostrophe will invoke it (await) before invoking process.exit.
 // `beforeExit` may be an async function, will be awaited, and takes no arguments.
 //
+// `pnpm`
+// A boolean to force on or off the pnpm related build routines. If not set,
+// an automated check will be performed to determine if pnpm is in use. We offer
+// an option, because automated check is not 100% reliable. Monorepo tools are
+// often hiding package management specifics (lock files, node_module structure, etc.)
+// in a centralized store.
+//
 // ## Awaiting the Apostrophe function
 //
 // The apos function is async, but in typical cases you do not
@@ -222,6 +229,11 @@ async function apostrophe(options, telemetry, rootSpan) {
     self.root = options.root || getRoot();
     self.rootDir = options.rootDir || path.dirname(self.root.filename);
     self.npmRootDir = options.npmRootDir || self.rootDir;
+    self.selfDir = __dirname;
+    // Signals to various (build related) places that we are running a pnpm installation.
+    // The relevant option, if set, has a higher precedence over the automated check.
+    self.isPnpm = options.pnpm ??
+      fs.existsSync(path.join(self.npmRootDir, 'pnpm-lock.yaml'));
 
     testModule();
 
@@ -290,7 +302,13 @@ async function apostrophe(options, telemetry, rootSpan) {
     self.apos.schema.registerAllSchemas();
     await self.apos.lock.withLock('@apostrophecms/migration:migrate', async () => {
       await self.apos.migration.migrate(); // emits before and after events, inside the lock
-      await self.apos.global.insertIfMissing();
+      // Inserts the global doc in the default locale if it does not exist; same for other
+      // singleton piece types registered by other modules
+      for (const module of Object.values(self.modules)) {
+        if (self.instanceOf(module, '@apostrophecms/piece-type') && module.options.singletonAuto) {
+          await module.insertIfMissing();
+        }
+      }
       await self.apos.page.implementParkAllInDefaultLocale();
       await self.apos.doc.replicate(); // emits beforeReplicate and afterReplicate events
       // Replicate will have created the parked pages across locales if needed, but we may
@@ -371,7 +389,7 @@ async function apostrophe(options, telemetry, rootSpan) {
     if (!options.nestedModuleSubdirs) {
       return;
     }
-    const configs = glob.sync(self.localModules + '/**/modules.js');
+    const configs = glob.sync(self.localModules + '/**/modules.js', { follow: true });
     _.each(configs, function(config) {
       try {
         _.merge(self.options.modules, require(config));
@@ -449,6 +467,8 @@ async function apostrophe(options, telemetry, rootSpan) {
       throw 'Specify the `shortName` option and set it to the name of your project\'s repository or folder';
     }
     self.title = self.options.title;
+    // Environment variable override
+    self.options.baseUrl = process.env.APOS_BASE_URL || self.options.baseUrl;
     self.baseUrl = self.options.baseUrl;
     self.prefix = self.options.prefix || '';
   }
@@ -505,14 +525,18 @@ async function apostrophe(options, telemetry, rootSpan) {
     // and throws an exception if we don't
     function findTestModule() {
       let m = module;
+      const nodeModuleRegex = new RegExp(`node_modules${path.sep}mocha`);
+      if (!require.main.filename.match(nodeModuleRegex)) {
+        throw new Error('mocha does not seem to be running, is this really a test?');
+      }
       while (m) {
-        if (m.parent && m.parent.filename.match(/node_modules\/mocha/)) {
+        if (m.parent && m.parent.filename.match(nodeModuleRegex)) {
+          return m;
+        } else if (!m.parent) {
+          // Mocha v10 doesn't inject mocha paths inside `module`, therefore, we only detect the parent until the last parent. But we can get Mocha running using `require.main` - Amin
           return m;
         }
         m = m.parent;
-        if (!m) {
-          throw new Error('mocha does not seem to be running, is this really a test?');
-        }
       }
     }
   }
@@ -533,7 +557,8 @@ async function apostrophe(options, telemetry, rootSpan) {
         'extendQueries',
         'icons',
         'i18n',
-        'webpack'
+        'webpack',
+        'commands'
       ]
     });
 
@@ -562,7 +587,8 @@ async function apostrophe(options, telemetry, rootSpan) {
     self.modules = {};
     for (const item of modulesToBeInstantiated()) {
       // module registers itself in self.modules
-      await self.synth.create(item, { apos: self });
+      const module = await self.synth.create(item, { apos: self });
+      await module.emit('moduleReady');
     }
   }
 
@@ -624,7 +650,7 @@ async function apostrophe(options, telemetry, rootSpan) {
             `
           );
         } else {
-          warn('orphan-modules', `You have a ${self.localModules}/${name} folder, but that module is not activated in app.js and it is not a base class of any other active module. Right now that code doesn't do anything.`);
+          warn('orphan-modules', `You have a ${self.localModules}/${name} folder, but that module is not activated in app.js\nand it is not a base class of any other active module. Right now that code doesn't do anything.`);
         }
       }
       function warn(name, message) {

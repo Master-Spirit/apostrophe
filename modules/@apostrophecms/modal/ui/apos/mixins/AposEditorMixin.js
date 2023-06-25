@@ -15,6 +15,7 @@
  */
 
 import { klona } from 'klona';
+import { evaluateExternalConditions, conditionalFields } from 'Modules/@apostrophecms/schema/lib/conditionalFields.js';
 
 export default {
   data() {
@@ -24,14 +25,16 @@ export default {
       },
       serverErrors: null,
       restoreOnly: false,
-      changed: []
+      readOnly: false,
+      changed: [],
+      externalConditionsResults: {}
     };
   },
 
   computed: {
     schema() {
       let schema = (this.moduleOptions.schema || []).filter(field => apos.schema.components.fields[field.type]);
-      if (this.restoreOnly) {
+      if (this.restoreOnly || this.readOnly) {
         schema = klona(schema);
         for (const field of schema) {
           field.readOnly = true;
@@ -43,7 +46,33 @@ export default {
     }
   },
 
+  watch: {
+    docType: {
+      // Evaluate external conditions found in current page-type's schema
+      async handler() {
+        if (this.moduleName === '@apostrophecms/page') {
+          await this.evaluateExternalConditions();
+        }
+      }
+    }
+  },
+
+  async created() {
+    await this.evaluateExternalConditions();
+  },
+
   methods: {
+    // Evaluate the external conditions found in each field
+    // via API calls -made in parallel for performance-
+    // and store their result for reusability.
+    async evaluateExternalConditions() {
+      this.externalConditionsResults = await evaluateExternalConditions(
+        this.schema,
+        this.docId || this.docFields?.data?._docId,
+        this.$t
+      );
+    },
+
     // followedByCategory may be falsy (all fields), "other" or "utility". The returned
     // object contains properties named for each field in that category that
     // follows other fields. For instance if followedBy is "utility" then in our
@@ -54,13 +83,21 @@ export default {
       const fields = this.getFieldsByCategory(followedByCategory);
 
       const followingValues = {};
+      const parentFollowing = {};
+      for (const [ key, val ] of Object.entries(this.parentFollowingValues || {})) {
+        parentFollowing[`<${key}`] = val;
+      }
 
       for (const field of fields) {
         if (field.following) {
           const following = Array.isArray(field.following) ? field.following : [ field.following ];
           followingValues[field.name] = {};
           for (const name of following) {
-            followingValues[field.name][name] = this.getFieldValue(name);
+            if (name.startsWith('<')) {
+              followingValues[field.name][name] = parentFollowing[name];
+            } else {
+              followingValues[field.name][name] = this.getFieldValue(name);
+            }
           }
         }
       }
@@ -73,7 +110,8 @@ export default {
     getFieldsByCategory(followedByCategory) {
       if (followedByCategory) {
         return (followedByCategory === 'other')
-          ? this.schema.filter(field => !this.utilityFields.includes(field.name)) : this.schema.filter(field => this.utilityFields.includes(field.name));
+          ? this.schema.filter(field => !this.utilityFields.includes(field.name))
+          : this.schema.filter(field => this.utilityFields.includes(field.name));
       } else {
         return this.schema;
       }
@@ -91,60 +129,14 @@ export default {
     // the returned object will contain properties only for conditional fields
     // in that category, although they may be conditional upon fields in either
     // category.
-
     conditionalFields(followedByCategory) {
-
-      const self = this;
-      const conditionalFields = {};
-
-      while (true) {
-        let change = false;
-        for (const field of this.schema) {
-          if (field.if) {
-            const result = evaluate(field.if);
-            const previous = conditionalFields[field.name];
-            if (previous !== result) {
-              change = true;
-            }
-            conditionalFields[field.name] = result;
-          }
-        }
-        if (!change) {
-          break;
-        }
-      }
-
-      const fields = this.getFieldsByCategory(followedByCategory);
-      const result = {};
-      for (const field of fields) {
-        if (field.if) {
-          result[field.name] = conditionalFields[field.name];
-        }
-      }
-      return result;
-
-      function evaluate(clause) {
-        let result = true;
-        for (const [ key, val ] of Object.entries(clause)) {
-          if (key === '$or') {
-            return val.some(clause => evaluate(clause));
-          }
-          if (conditionalFields[key] === false) {
-            result = false;
-            break;
-          }
-          if (Array.isArray(self.getFieldValue(key))) {
-            result = self.getFieldValue(key).includes(val);
-            break;
-          }
-          if (val !== self.getFieldValue(key)) {
-            result = false;
-            break;
-          }
-        }
-        return result;
-      }
-
+      return conditionalFields(
+        this.schema,
+        this.getFieldsByCategory(followedByCategory),
+        // currentDoc for arrays, docFields for all other editors
+        this.currentDoc ? this.currentDoc.data : this.docFields.data,
+        this.externalConditionsResults
+      );
     },
 
     // Overridden by components that split the fields into several AposSchemas
@@ -161,6 +153,7 @@ export default {
     // in the schema. fallback is a fallback error message, if none is provided
     // by the server.
     async handleSaveError(e, { fallback }) {
+      console.error(e);
       if (e.body && e.body.data && e.body.data.errors) {
         const serverErrors = {};
         let first;
@@ -194,7 +187,50 @@ export default {
       this.$nextTick(async () => {
         this.triggerValidation = false;
       });
+    },
+    // Perform any postprocessing required by direct or nested schema fields
+    // before the object can be saved
+    async postprocess() {
+      // Relationship fields may have postprocessors (e.g. autocropping)
+      const relationships = findRelationships(this.schema, this.docFields.data);
+      for (const relationship of relationships) {
+        if (!(relationship.value && relationship.field.postprocessor)) {
+          continue;
+        }
+        const withType = relationship.field.withType;
+        const module = apos.modules[withType];
+        relationship.context[relationship.field.name] = (await apos.http.post(`${module.action}/${relationship.field.postprocessor}`, {
+          qs: {
+            aposMode: 'draft'
+          },
+          body: {
+            relationship: relationship.value,
+            // Pass the options of the widget currently being edited, some
+            // postprocessors need these (e.g. autocropping cares about widget aspectRatio)
+            widgetOptions: apos.area.widgetOptions[0]
+          },
+          busy: true
+        })).relationship;
+      }
+      function findRelationships(schema, object) {
+        let relationships = [];
+        for (const field of schema) {
+          if (field.type === 'relationship') {
+            relationships.push({
+              context: object,
+              field,
+              value: object[field.name]
+            });
+          } else if (field.type === 'array') {
+            for (const value of (object[field.name] || [])) {
+              relationships = [ ...relationships, findRelationships(field.schema, value) ];
+            }
+          } else if (field.type === 'object') {
+            relationships = [ ...relationships, findRelationships(field.schema, object[field.name] || {}) ];
+          }
+        }
+        return relationships;
+      }
     }
-
   }
 };

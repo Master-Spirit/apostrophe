@@ -17,13 +17,14 @@ export default {
     }
 
     i18next.init({
-      lng: i18n.locale,
+      lng: canonicalize(i18n.locale),
       fallbackLng,
       resources: {},
       debug: i18n.debug,
       interpolation: {
         escapeValue: false
       },
+      skipOnVariables: false,
       appendNamespaceToMissingKey: true,
       defaultNS: [ apos.i18n.defaultNamespace ],
       parseMissingKeyHandler (key) {
@@ -45,11 +46,11 @@ export default {
     });
 
     for (const [ ns, phrases ] of Object.entries(i18n.i18n[i18n.locale])) {
-      i18next.addResourceBundle(i18n.locale, ns, phrases, true, true);
+      i18next.addResourceBundle(canonicalize(i18n.locale), ns, phrases, true, true);
     }
     if (i18n.locale !== i18n.defaultLocale) {
       for (const [ ns, phrases ] of Object.entries(i18n.i18n[i18n.defaultLocale])) {
-        i18next.addResourceBundle(i18n.defaultLocale, ns, phrases, true, true);
+        i18next.addResourceBundle(canonicalize(i18n.defaultLocale), ns, phrases, true, true);
       }
     }
     if ((i18n.locale !== 'en') && (i18n.defaultLocale !== 'en')) {
@@ -107,5 +108,15 @@ export default {
         return result;
       }
     };
+
+    function canonicalize(locale) {
+      const [ language, territory ] = locale.split('-');
+      if (territory) {
+        return `${language}-${territory.toUpperCase()}`;
+      }
+      return locale;
+    }
+
   }
+
 };

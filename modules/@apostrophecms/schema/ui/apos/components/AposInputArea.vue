@@ -22,6 +22,7 @@
           :id="next._id"
           :field-id="field._id"
           :field="field"
+          :generation="generation"
           @changed="changed"
         />
       </div>
@@ -37,6 +38,15 @@ import cuid from 'cuid';
 export default {
   name: 'AposInputArea',
   mixins: [ AposInputMixin ],
+  props: {
+    generation: {
+      type: Number,
+      required: false,
+      default() {
+        return null;
+      }
+    }
+  },
   data () {
     return {
       next: this.value.data || this.getEmptyValue(),
@@ -52,7 +62,18 @@ export default {
     },
     choices() {
       const result = [];
-      for (const [ name, options ] of Object.entries(this.field.options.widgets)) {
+
+      let widgets = this.field.options.widgets || {};
+      if (this.field.options.groups) {
+        for (const group of Object.entries(this.field.options.groups)) {
+          widgets = {
+            ...widgets,
+            ...group.widgets
+          };
+        }
+      }
+
+      for (const [ name, options ] of Object.entries(widgets)) {
         result.push({
           name,
           label: options.addLabel || apos.modules[`${name}-widget`].label

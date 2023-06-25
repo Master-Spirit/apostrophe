@@ -194,14 +194,14 @@ export default {
         action: 'live',
         modifiers: this.pageSetMenuSelectionIsLive ? [ 'selected', 'disabled' ] : []
       }, {
-        label: 'apostrophe:archive',
+        label: 'apostrophe:archived',
         action: 'archive',
         modifiers: !this.pageSetMenuSelectionIsLive ? [ 'selected', 'disabled' ] : []
       } ];
     },
     pageSetMenuButton() {
       const button = {
-        label: this.pageSetMenuSelectionIsLive ? 'apostrophe:live' : 'apostrophe:archive',
+        label: this.pageSetMenuSelectionIsLive ? 'apostrophe:live' : 'apostrophe:archived',
         icon: 'chevron-down-icon',
         modifiers: [ 'no-motion', 'outline', 'icon-right' ],
         class: 'apos-pages-manager__page-set-menu-button'
@@ -222,9 +222,13 @@ export default {
     this.modal.active = true;
     await this.getPages();
     apos.bus.$on('content-changed', this.getPages);
+    apos.bus.$on('command-menu-manager-create-new', this.create);
+    apos.bus.$on('command-menu-manager-close', this.confirmAndCancel);
   },
   destroyed() {
     apos.bus.$off('content-changed', this.getPages);
+    apos.bus.$off('command-menu-manager-create-new', this.create);
+    apos.bus.$off('command-menu-manager-close', this.confirmAndCancel);
   },
   methods: {
     moreMenuHandler(action) {

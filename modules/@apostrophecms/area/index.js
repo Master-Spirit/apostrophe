@@ -1,5 +1,4 @@
 const _ = require('lodash');
-const deep = require('deep-get-set');
 const { stripIndent } = require('common-tags');
 
 // An area is a series of zero or more widgets, in which users can add
@@ -43,9 +42,10 @@ module.exports = {
             throw self.apos.error('invalid');
           }
 
-          let options = field.options && field.options.widgets && field.options.widgets[type];
+          const widgets = self.getWidgets(field.options);
 
-          options = options || {};
+          const options = widgets[type] || {};
+
           const manager = self.getWidgetManager(type);
           if (!manager) {
             self.warnMissingWidgetType(type);
@@ -96,6 +96,20 @@ module.exports = {
       setWidgetManager(name, manager) {
         self.widgetManagers[name] = manager;
       },
+      getWidgets(options) {
+        let widgets = options.widgets || {};
+
+        if (options.groups) {
+          for (const group of Object.keys(options.groups)) {
+            widgets = {
+              ...widgets,
+              ...options.groups[group].widgets
+            };
+          }
+        }
+
+        return widgets;
+      },
       // Get the manager object for the given widget type name.
       getWidgetManager(name) {
         return self.widgetManagers[name];
@@ -140,7 +154,12 @@ module.exports = {
             in an options property.
           `);
         }
-        _.each(options.widgets, function (options, name) {
+
+        const widgets = self.getWidgets(options);
+
+        options.widgets = widgets;
+
+        _.each(widgets, function (options, name) {
           const manager = self.widgetManagers[name];
           if (manager) {
             choices.push({
@@ -223,15 +242,15 @@ module.exports = {
 
           const areaRendered = await self.apos.area.renderArea(req, preppedArea, context);
 
-          deep(context, `${path}._rendered`, areaRendered);
-          deep(context, `${path}._fieldId`, undefined);
-          deep(context, `${path}.items`, undefined);
+          _.set(context, [ path, '_rendered' ], areaRendered);
+          _.set(context, [ path, '_fieldId' ], undefined);
+          _.set(context, [ path, 'items' ], undefined);
         }
 
         function findParent(doc, dotPath) {
           const pathSplit = dotPath.split('.');
           const parentDotPath = pathSplit.slice(0, pathSplit.length - 1).join('.');
-          return deep(doc, parentDotPath) || doc;
+          return _.get(doc, parentDotPath, doc);
         }
       },
       // Sanitize an input array of items intended to become
@@ -254,7 +273,8 @@ module.exports = {
         options = options || {};
         const result = [];
         const errors = [];
-        const widgetsOptions = options.widgets || {};
+        const widgetsOptions = self.getWidgets(options);
+
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
           if ((item == null) || typeof item !== 'object' || typeof item.type !== 'string') {
@@ -303,15 +323,20 @@ module.exports = {
       // to update a widget on the page after it is saved, or for
       // preview when editing.
       async renderWidget(req, type, data, options) {
-        const manager = self.getWidgetManager(type);
-        if (!manager) {
-          // No manager available - possibly a stale widget in the database
-          // of a type no longer in the project
-          self.warnMissingWidgetType(type);
-          return '';
+        try {
+          const manager = self.getWidgetManager(type);
+          if (!manager) {
+            // No manager available - possibly a stale widget in the database
+            // of a type no longer in the project
+            self.warnMissingWidgetType(type);
+            return '';
+          }
+          data.type = type;
+          return manager.output(req, data, options);
+        } catch (e) {
+          console.error(e);
+          throw e;
         }
-        data.type = type;
-        return manager.output(req, data, options);
       },
       // Update or create an area at the specified
       // dot path in the document with the specified
@@ -339,12 +364,12 @@ module.exports = {
           // always okay - unless it already exists
           // and is not an area.
           if (components.length > 1) {
-            const existing = deep(doc, dotPath);
+            const existing = _.get(doc, dotPath);
             if (existing && existing.metaType !== 'area') {
               throw self.apos.error('forbidden');
             }
           }
-          const existingArea = deep(doc, dotPath);
+          const existingArea = _.get(doc, dotPath);
           const existingItems = existingArea && (existingArea.items || []);
           if (_.isEqual(self.apos.util.clonePermanent(items), self.apos.util.clonePermanent(existingItems))) {
             // No real change — don't waste a version and clutter the database.
@@ -352,7 +377,7 @@ module.exports = {
             // nothing has changed. -Tom
             return;
           }
-          deep(doc, dotPath, {
+          _.set(doc, dotPath, {
             metaType: 'area',
             items: items
           });
@@ -554,6 +579,8 @@ module.exports = {
         const widgetEditors = {};
         const widgetManagers = {};
         const widgetIsContextual = {};
+        const widgetHasPlaceholder = {};
+        const widgetHasInitialModal = {};
         const contextualWidgetDefaultData = {};
 
         _.each(self.widgetManagers, function (manager, name) {
@@ -563,6 +590,8 @@ module.exports = {
           widgetEditors[name] = (browserData && browserData.components && browserData.components.widgetEditor) || 'AposWidgetEditor';
           widgetManagers[name] = manager.__meta.name;
           widgetIsContextual[name] = manager.options.contextual;
+          widgetHasPlaceholder[name] = manager.options.placeholder;
+          widgetHasInitialModal[name] = !manager.options.placeholder && manager.options.initialModal !== false;
           contextualWidgetDefaultData[name] = manager.options.defaultData;
         });
 
@@ -573,6 +602,8 @@ module.exports = {
             widgetEditors
           },
           widgetIsContextual,
+          widgetHasPlaceholder,
+          widgetHasInitialModal,
           contextualWidgetDefaultData,
           widgetManagers,
           action: self.action

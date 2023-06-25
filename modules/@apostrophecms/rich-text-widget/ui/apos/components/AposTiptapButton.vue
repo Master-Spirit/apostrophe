@@ -6,9 +6,14 @@
     :class="{ 'apos-is-active': active }"
     :label="tool.label"
     :icon-only="!!tool.icon"
-    :icon="tool.icon ? tool.icon : false"
-    :icon-size="16"
+    :icon="tool.icon || false"
+    :icon-size="tool.iconSize || 16"
     :modifiers="['no-border', 'no-motion']"
+    :tooltip="{
+      content: tool.label,
+      placement: 'top',
+      delay: 650
+    }"
   />
 </template>
 

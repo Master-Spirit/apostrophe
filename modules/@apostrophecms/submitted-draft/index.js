@@ -9,7 +9,7 @@ module.exports = {
     quickCreate: false,
     label: 'apostrophe:submittedDraft',
     pluralLabel: 'Submitted Drafts',
-    canCreate: false,
+    showCreate: false,
     showDismissSubmission: true,
     showArchive: false,
     showDiscardDraft: false,
@@ -58,6 +58,10 @@ module.exports = {
         label: 'apostrophe:type'
       }
     }
+  },
+
+  batchOperations: {
+    remove: [ 'publish' ]
   },
 
   handlers(self) {

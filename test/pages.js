@@ -215,6 +215,24 @@ describe('Pages', function() {
     assert(page.path === `${homeId.replace(':en:published', '')}/parent/child`);
   });
 
+  it('should convert an uppercase URL to its lowercase version', async function() {
+    const response = await apos.http.get('/PArent/cHild', {
+      fullResponse: true
+    });
+    assert(response.body.match(/URL: \/parent\/child/));
+  });
+
+  it('should NOT convert an uppercase URL if redirectFailedUpperCaseUrls is false', async function() {
+    apos.page.options.redirectFailedUpperCaseUrls = false;
+    try {
+      await apos.http.get('/PArent/cHild', {
+        fullResponse: true
+      });
+    } catch (error) {
+      assert(error.status === 404);
+    }
+  });
+
   it('should be able to include the ancestors of a page', async function() {
     const cursor = apos.page.find(apos.task.getAnonReq(), { slug: '/parent/child' });
 
@@ -1023,4 +1041,216 @@ describe('Pages', function() {
     delete apos.page.options.cache;
   });
 
+  describe('unpublish', function() {
+    const baseItem = {
+      aposDocId: 'some-page',
+      type: 'test-page',
+      slug: '/some-page',
+      visibility: 'public',
+      path: '/some-page',
+      level: 1,
+      rank: 0
+    };
+    const draftItem = {
+      ...baseItem,
+      _id: 'some-page:en:draft',
+      aposLocale: 'en:draft'
+    };
+    const publishedItem = {
+      ...baseItem,
+      _id: 'some-page:en:published',
+      aposLocale: 'en:published'
+    };
+    const previousItem = {
+      ...baseItem,
+      _id: 'some-page:en:previous',
+      aposLocale: 'en:previous'
+    };
+
+    let draft;
+    let published;
+    let previous;
+
+    this.beforeEach(async function() {
+      await apos.doc.db.insertMany([
+        draftItem,
+        publishedItem,
+        previousItem
+      ]);
+
+      draft = await apos.http.post(
+        `/api/v1/@apostrophecms/page/${publishedItem._id}/unpublish?apiKey=${apiKey}`,
+        {
+          body: {},
+          busy: true
+        }
+      );
+
+      published = await apos.doc.db.findOne({ _id: 'some-page:en:published' });
+      previous = await apos.doc.db.findOne({ _id: 'some-page:en:previous' });
+    });
+
+    this.afterEach(async function() {
+      await apos.doc.db.deleteMany({
+        aposDocId: 'some-page'
+      });
+    });
+
+    it('should remove the published and previous versions of a page', function() {
+      assert(published === null);
+      assert(previous === null);
+    });
+
+    it('should update the draft version of a page', function() {
+      assert(draft._id === draftItem._id);
+      assert(draft.modified === true);
+      assert(draft.lastPublishedAt === null);
+    });
+  });
+
+  describe('draft sharing', function() {
+    const page = {
+      _id: 'some-page:en:published',
+      title: 'Some Page',
+      aposDocId: 'some-page',
+      type: 'test-page',
+      slug: '/some-page',
+      visibility: 'public',
+      path: '/some-page',
+      level: 1,
+      rank: 0
+    };
+
+    let req;
+    let previousDraft;
+    let previousPublished;
+    let shareResponse;
+
+    const generatePublicUrl = shareResponse =>
+      `${shareResponse._url}?aposShareKey=${encodeURIComponent(shareResponse.aposShareKey)}&aposShareId=${encodeURIComponent(shareResponse._id)}`;
+
+    this.beforeEach(async function() {
+      req = apos.task.getReq();
+      previousPublished = await apos.page.insert(req, homeId, 'lastChild', page);
+      previousDraft = await apos.page.findOneForEditing(
+        apos.task.getReq({ mode: 'draft' }),
+        { _id: 'some-page:en:draft' }
+      );
+      await apos.page.update(req, {
+        ...previousDraft,
+        title: 'Some Page EDITED'
+      });
+    });
+
+    this.afterEach(async function() {
+      await apos.doc.db.deleteMany({ aposDocId: page.aposDocId });
+    });
+
+    describe('share', function() {
+      this.beforeEach(async function() {
+        shareResponse = await apos.page.share(req, previousDraft);
+      });
+
+      it('should have a "share" method that returns a draft with aposShareKey', async function() {
+        const draft = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:draft`
+        });
+        const published = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:published`
+        });
+
+        assert(apos.page.share);
+        assert(!Object.prototype.hasOwnProperty.call(published, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(previousDraft, 'aposShareKey'));
+        assert(shareResponse.aposShareKey);
+        assert(draft.aposShareKey);
+        assert(shareResponse.aposShareKey === draft.aposShareKey);
+      });
+
+      it('should grant public access to a draft after having enabled draft sharing', async function() {
+        const publicUrl = generatePublicUrl(shareResponse);
+        const response = await apos.http.get(shareResponse._url, { fullResponse: true });
+        const publicResponse = await apos.http.get(publicUrl, { fullResponse: true });
+
+        assert(response.status === 200);
+        assert(response.body.includes('Some Page'));
+        assert(!response.body.includes('Some Page EDITED'));
+
+        assert(publicResponse.status === 200);
+        assert(publicResponse.body.includes('Some Page EDITED'));
+      });
+
+      it('should grant public access to a draft without admin UI, even when logged-in', async function() {
+        const jar = apos.http.jar();
+
+        await apos.http.post('/api/v1/@apostrophecms/login/login', {
+          body: {
+            username: 'admin',
+            password: 'admin',
+            session: true
+          },
+          jar
+        });
+
+        const publicUrl = generatePublicUrl(shareResponse);
+        const publicResponse = await apos.http.get(publicUrl, {
+          fullResponse: true,
+          jar
+        });
+
+        assert(publicResponse.status === 200);
+        assert(publicResponse.body.includes('Some Page EDITED'));
+        assert(!publicResponse.body.includes('apos-admin-bar'));
+      });
+
+      it('should grant public access to a draft after having re-enabled draft sharing', async function() {
+        await apos.page.unshare(req, previousDraft);
+
+        const shareResponse = await apos.page.share(req, previousDraft);
+        const publicUrl = generatePublicUrl(shareResponse);
+
+        const publicResponse = await apos.http.get(publicUrl, { fullResponse: true });
+
+        assert(publicResponse.status === 200);
+        assert(publicResponse.body.includes('Some Page EDITED'));
+      });
+    });
+
+    describe('unshare', function() {
+      this.beforeEach(async function() {
+        shareResponse = await apos.page.share(req, previousDraft);
+      });
+
+      it('should have a "unshare" method that returns a draft without aposShareKey', async function() {
+        const unshareResponse = await apos.page.unshare(req, previousDraft);
+
+        const draft = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:draft`
+        });
+        const published = await apos.doc.db.findOne({
+          _id: `${previousDraft.aposDocId}:en:published`
+        });
+
+        assert(apos.page.unshare);
+        assert(!Object.prototype.hasOwnProperty.call(previousPublished, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(previousDraft, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(published, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(draft, 'aposShareKey'));
+        assert(!Object.prototype.hasOwnProperty.call(unshareResponse, 'aposShareKey'));
+      });
+
+      it('should remove public access to a draft after having disabled draft sharing', async function() {
+        await apos.page.unshare(req, previousDraft);
+
+        try {
+          const publicUrl = generatePublicUrl(shareResponse);
+          await apos.http.get(publicUrl, { fullResponse: true });
+        } catch (error) {
+          assert(error.status === 404);
+          return;
+        }
+        throw new Error('should have thrown 404 error');
+      });
+    });
+  });
 });

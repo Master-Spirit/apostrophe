@@ -22,6 +22,7 @@ module.exports = {
           type: 'select',
           label: 'apostrophe:type',
           required: true,
+          def: self.options.apos.page.typeChoices[0].name,
           choices: self.options.apos.page.typeChoices.map(function (type) {
             return {
               value: type.name,
@@ -42,12 +43,16 @@ module.exports = {
       remove: [ 'archived' ],
       group: {
         utility: {
-          fields: [
+          // Keep `slug`, `type`, `visibility` and `orphan` fields before others,
+          // in case of modules improving `@apostrophecms/doc-type` that would add
+          // custom fields (included in `self.fieldsGroups.utility.fields`).
+          fields: _.uniq([
             'slug',
             'type',
             'visibility',
-            'orphan'
-          ]
+            'orphan',
+            ...self.fieldsGroups.utility.fields
+          ])
         }
       }
     };
@@ -166,7 +171,10 @@ module.exports = {
         }
       },
       beforeUnpublish: {
-        async descendantsMustNotBePublished(req, published) {
+        async descendantsMustNotBePublished(req, published, options = {}) {
+          if (options.descendantsMustNotBePublished === false) {
+            return;
+          }
           const descendants = await self.apos.doc.db.countDocuments({
             path: self.apos.page.matchDescendants(published),
             aposLocale: published.aposLocale
@@ -178,6 +186,11 @@ module.exports = {
             // guarded to happen from the bottom up. Just providing minimum
             // acceptable coverage here for now
             throw self.apos.error('invalid', 'You must unpublish child pages before unpublishing their parent.');
+          }
+        },
+        async parkedPageMustNotBeUnpublished(req, published) {
+          if (published.parked) {
+            throw self.apos.error('invalid', 'apostrophe:pageIsParkedAndCannotBeUnpublished');
           }
         }
       },
@@ -289,6 +302,11 @@ module.exports = {
       // the `title` property, but since this is a page we are including
       // the slug as well.
       getAutocompleteTitle(doc, query) {
+        // TODO Remove in next major version.
+        self.apos.util.warnDevOnce(
+          'deprecate-get-autocomplete-title',
+          'self.getAutocompleteTitle() is deprecated. Use the autocomplete(\'...\') query builder instead. More info at https://v3.docs.apostrophecms.org/reference/query-builders.html#autocomplete'
+        );
         return doc.title + ' (' + doc.slug + ')';
       },
       // `req` determines what the user is eligible to edit, `criteria`

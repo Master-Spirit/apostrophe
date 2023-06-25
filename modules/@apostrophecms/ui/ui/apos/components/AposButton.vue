@@ -512,6 +512,9 @@ export default {
     &[disabled].apos-button--busy {
       border: 1px solid var(--a-danger-button-disabled);
     }
+    &.apos-button--inline {
+      color: var(--a-danger-button-active);
+    }
     .apos-spinner__svg {
       color: var(--a-danger);
     }
@@ -530,17 +533,6 @@ export default {
     padding: 10px;
     .apos-button__icon {
       margin-right: 0;
-    }
-  }
-
-  .apos-button--rich-text {
-    background-color: var(--a-background);
-    border-radius: 0;
-    &:hover {
-      background-color: var(--a-base-8);
-    }
-    &:focus, &:active {
-      background-color: var(--a-base-9);
     }
   }
 

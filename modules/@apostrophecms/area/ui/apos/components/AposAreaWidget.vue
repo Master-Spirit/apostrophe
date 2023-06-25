@@ -5,6 +5,8 @@
     :class="{'apos-area-widget-wrapper--foreign': foreign}"
     :data-area-widget="widget._id"
     :data-area-label="widgetLabel"
+    :data-apos-widget-foreign="foreign ? 1 : 0"
+    :data-apos-widget-id="widget._id"
   >
     <div
       class="apos-area-widget-inner"
@@ -18,10 +20,14 @@
         :class="ui.labels"
       >
         <ol class="apos-area-widget__breadcrumbs">
+          <li class="apos-area-widget__breadcrumb apos-area-widget__breadcrumb--widget-icon">
+            <AposIndicator :icon="widgetIcon" :icon-size="13" />
+          </li>
           <li
-            v-for="item in breadcrumbs.list"
+            v-for="(item, index) in breadcrumbs.list"
             :key="item.id"
             class="apos-area-widget__breadcrumb"
+            :data-apos-widget-breadcrumb="breadcrumbs.list.length - index"
           >
             <AposButton
               type="quiet"
@@ -32,7 +38,7 @@
               :modifiers="['icon-right', 'no-motion']"
             />
           </li>
-          <li class="apos-area-widget__breadcrumb">
+          <li class="apos-area-widget__breadcrumb" data-apos-widget-breadcrumb="0">
             <AposButton
               type="quiet"
               @click="foreign ? $emit('edit', i) : false"
@@ -60,7 +66,8 @@
           @menu-close="toggleMenuFocus($event, 'top', false)"
           :context-menu-options="contextMenuOptions"
           :index="i"
-          :widget-options="options.widgets"
+          :widget-options="widgets"
+          :options="options"
           :disabled="disabled"
         />
       </div>
@@ -96,17 +103,18 @@
       <component
         v-if="isContextual && !foreign"
         :is="widgetEditorComponent(widget.type)"
+        :options="widgetOptions"
+        :type="widget.type"
         :value="widget"
         @update="$emit('update', $event)"
-        :options="options.widgets[widget.type]"
-        :type="widget.type"
         :doc-id="docId"
         :focused="focused"
+        :key="generation"
       />
       <component
         v-else
         :is="widgetComponent(widget.type)"
-        :options="options.widgets[widget.type]"
+        :options="widgetOptions"
         :type="widget.type"
         :id="widget._id"
         :area-field-id="fieldId"
@@ -115,6 +123,7 @@
         @edit="$emit('edit', i);"
         :doc-id="docId"
         :rendering="rendering"
+        :key="generation"
       />
       <div
         class="apos-area-widget-controls apos-area-widget-controls--add apos-area-widget-controls--add--bottom"
@@ -126,7 +135,8 @@
           @add="$emit('add', $event)"
           :context-menu-options="bottomContextMenuOptions"
           :index="i + 1"
-          :widget-options="options.widgets"
+          :widget-options="widgets"
+          :options="options"
           :disabled="disabled"
           @menu-open="toggleMenuFocus($event, 'bottom', true)"
           @menu-close="toggleMenuFocus($event, 'bottom', false)"
@@ -137,7 +147,6 @@
 </template>
 
 <script>
-
 import { klona } from 'klona';
 import AposIndicator from '../../../../ui/ui/apos/components/AposIndicator.vue';
 
@@ -146,6 +155,10 @@ export default {
   components: { AposIndicator },
   props: {
     widgetHovered: {
+      type: String,
+      default: null
+    },
+    nonForeignWidgetHovered: {
       type: String,
       default: null
     },
@@ -200,6 +213,13 @@ export default {
     disabled: {
       type: Boolean,
       default: false
+    },
+    generation: {
+      type: Number,
+      required: false,
+      default() {
+        return null;
+      }
     }
   },
   emits: [ 'clone', 'up', 'down', 'remove', 'edit', 'cut', 'copy', 'update', 'add', 'changed' ],
@@ -240,7 +260,8 @@ export default {
       breadcrumbs: {
         $lastEl: null,
         list: []
-      }
+      },
+      widgets: this.options.widgets || {}
     };
   },
   computed: {
@@ -250,8 +271,19 @@ export default {
         menuPlacement: 'top'
       };
     },
+    widgetIcon() {
+      return this.contextMenuOptions.menu.filter(item => item.name === this.widget.type)[0]?.icon || 'shape-icon';
+    },
     widgetLabel() {
-      return window.apos.modules[`${this.widget.type}-widget`].label;
+      const moduleName = `${this.widget.type}-widget`;
+      const module = window.apos.modules[moduleName];
+      if (!module) {
+        console.error(`No ${moduleName} module found for widget type ${this.widget.type}`);
+      }
+      return module.label;
+    },
+    widgetOptions() {
+      return this.widgets[this.widget.type];
     },
     isContextual() {
       return this.moduleOptions.widgetIsContextual[this.widget.type];
@@ -269,11 +301,13 @@ export default {
         return false;
       }
 
-      if (this.widgetHovered) {
-        return this.widgetHovered !== this.widget._id;
-      } else {
-        return false;
-      }
+      return !(this.hovered || this.nonForeignHovered);
+    },
+    hovered() {
+      return this.widgetHovered === this.widget._id;
+    },
+    nonForeignHovered() {
+      return this.nonForeignWidgetHovered === this.widget._id;
     },
     // Sets up all the interaction classes based on the current
     // state. If our widget is suppressed, return a blank UI state and reset
@@ -283,11 +317,11 @@ export default {
         controls: this.state.controls.show ? this.classes.show : null,
         labels: this.state.labels.show ? this.classes.show : null,
         container: this.state.container.focus ? this.classes.focus
-          : (this.state.container.highlight ? this.classes.highlight : null),
+          : ((this.state.container.highlight || this.nonForeignHovered) ? this.classes.highlight : null),
         addTop: this.state.add.top.focus ? this.classes.focus
-          : (this.state.add.top.show ? this.classes.show : null),
+          : ((this.state.add.top.show || this.nonForeignHovered) ? this.classes.show : null),
         addBottom: this.state.add.bottom.focus ? this.classes.focus
-          : (this.state.add.bottom.show ? this.classes.show : null)
+          : ((this.state.add.bottom.show || this.nonForeignHovered) ? this.classes.show : null)
       };
 
       if (this.isSuppressed) {
@@ -325,6 +359,16 @@ export default {
       }
     }
   },
+  created() {
+    if (this.options.groups) {
+      for (const group of Object.keys(this.options.groups)) {
+        this.widgets = {
+          ...this.options.groups[group].widgets,
+          ...this.widgets
+        };
+      }
+    }
+  },
   mounted() {
     // AposAreaEditor is listening for keyboard input that triggers
     // a 'focus my parent' plea
@@ -332,9 +376,7 @@ export default {
 
     this.breadcrumbs.$lastEl = this.$el;
 
-    if (!this.foreign) {
-      this.getBreadcrumbs();
-    }
+    this.getBreadcrumbs();
 
     if (this.widgetFocused) {
       // If another widget was in focus (because the user clicked the "add"
@@ -371,11 +413,18 @@ export default {
       if (this.focused) {
         return;
       }
-      this.state.add.top.show = true;
-      this.state.add.bottom.show = true;
+      if (!this.foreign) {
+        this.state.add.top.show = true;
+        this.state.add.bottom.show = true;
+      }
       this.state.container.highlight = true;
       this.state.labels.show = true;
-      apos.bus.$emit('widget-hover', this.widget._id);
+      const closest = this.foreign && this.$el.closest('[data-apos-widget-foreign="0"]');
+      const closestId = closest && closest.getAttribute('data-apos-widget-id');
+      apos.bus.$emit('widget-hover', {
+        _id: this.widget._id,
+        nonForeignId: this.foreign ? closestId : null
+      });
     },
 
     mouseleave() {
@@ -387,6 +436,12 @@ export default {
         this.state.labels.show = false;
         this.state.add.top.show = false;
         this.state.add.bottom.show = false;
+      }
+      if (this.hovered) {
+        apos.bus.$emit('widget-hover', {
+          _id: null,
+          nonForeignId: null
+        });
       }
     },
 
@@ -408,7 +463,7 @@ export default {
         this.focused = false;
         this.resetState();
         this.highlightable = false;
-        document.removeEventListener('click', this.blurUnfocus);
+        document.removeEventListener('click', this.unfocus);
         apos.bus.$emit('widget-focus', null);
       }
     },
@@ -453,9 +508,11 @@ export default {
     widgetComponent(type) {
       return this.moduleOptions.components.widgets[type];
     },
+
     widgetEditorComponent(type) {
       return this.moduleOptions.components.widgetEditors[type];
     }
+
   }
 };
 </script>
@@ -480,33 +537,16 @@ export default {
   .apos-area-widget-inner {
     position: relative;
     min-height: 50px;
-    &:before, &:after {
-      content: '';
-      position: absolute;
-      left: 0;
-      width: 100%;
-      height: 1px;
-      border-top: 1px dashed var(--a-primary);
-      opacity: 0;
-      transition: opacity 0.2s ease;
-      pointer-events: none;
-    }
-
-    &:before {
-      top: 0;
-    }
-    &:after {
-      bottom: 0;
-    }
+    border-radius: var(--a-border-radius);
+    outline: 1px solid transparent;
+    transition: outline 0.2s ease;
     &.apos-is-highlighted {
-      &:before, &:after {
-        opacity: 0.4;
-      }
+      outline: 1px dashed var(--a-primary-transparent-50);
     }
     &.apos-is-focused {
-      &:before, &:after {
-        opacity: 1;
-        border-top: 1px solid var(--a-primary);
+      outline: 1px dashed var(--a-primary);
+      &::v-deep .apos-rich-text-editor__editor.apos-is-visually-empty {
+        box-shadow: none;
       }
     }
 
@@ -554,30 +594,90 @@ export default {
     }
   }
 
-  // TODO commented code awaiting the triumphant return of the canvas -SR
-
   .apos-area-widget-controls--modify {
     right: 0;
-    // transform: translate3d(calc(100% + 5px), 0, 0);
-    // @media (max-width: ($a-canvas-max + 100px)) { // include extra space for tools
-    // transform: translate3d(-10px, 30px, 0);
     transform: translate3d(-10px, 30px, 0);
-    // }
+    ::v-deep .apos-button-group__inner {
+      border: 1px solid var(--a-primary-transparent-25);
+      box-shadow: var(--a-box-shadow);
+    }
+    ::v-deep .apos-button-group .apos-button {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: none;
+      border-radius: var(--a-border-radius);
+      background-color: transparent;
+      color: var(--a-base-1);
+      &:hover[disabled] {
+        background-color: transparent;
+      }
+      &:hover:not([disabled]), &:active:not([disabled]), &:focus:not([disabled]) {
+        background-color: var(--a-primary-transparent-10);
+        color: var(--a-primary);
+      }
+      &[disabled] {
+        color: var(--a-base-6);
+      }
+    }
   }
-
-  // .apos-area-widget-inner .apos-area-widget-inner .apos-area-widget-controls--modify {
-  // right: auto;
-  // left: 0;
-  // transform: translate3d(calc(-100% - 5px), 0, 0);
-  // @media (max-width: ($a-canvas-max + 100px)) { // include extra space for tools
-  // transform: translate3d(5px, 30px, 0);
-  // }
-  // }
 
   .apos-area-widget-controls--add {
     top: 0;
     left: 50%;
     transform: translate(-50%, -50%);
+  }
+
+  .apos-area-widget-controls--add ::v-deep {
+
+    .apos-button__wrapper {
+      padding: 8px;
+
+      &:hover .apos-button:not([disabled]) {
+        transform: scale(1.15);
+        background-size: 150% 100%;
+        border-radius: 10px;
+        transition-duration: 0.5s;
+
+        /* stylelint-disable-next-line max-nesting-depth */
+        .apos-button__label {
+          max-width: 100px;
+          max-height: 100px;
+          transition-duration: 0.5s;
+          padding: 0 5px 0 0;
+        }
+
+        /* stylelint-disable-next-line max-nesting-depth */
+        .apos-button__icon {
+          margin-right: 5px;
+        }
+      }
+    }
+
+    .apos-button__icon {
+      margin-right: 0;
+    }
+
+    .apos-button__label {
+      display: inline-block;
+      overflow: hidden;
+      max-width: 0;
+      max-height: 0;
+      transition: max-width 0.2s var(--a-transition-timing-bounce);
+      white-space: nowrap;
+      font-size: var(--a-type-small);
+    }
+
+    .apos-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-image: linear-gradient( 45deg, var(--a-primary), var(--a-primary-dark-15), var(--a-primary-light-40), var(--a-primary) );
+      background-size: 200% 100%;
+      transition: all 0.2s var(--a-transition-timing-bounce);
+      padding: 5px;
+      border-radius: 12px;
+    }
   }
 
   .apos-area-widget-controls--add--bottom {
@@ -594,7 +694,7 @@ export default {
 
   .apos-area-widget__label {
     position: absolute;
-    top: 1px;
+    top: -8px;
     right: 0;
     display: flex;
     transform: translateY(-100%);
@@ -610,9 +710,10 @@ export default {
     display: flex;
     align-items: center;
     margin: 0;
-    padding: 2px;
+    padding: 4px 6px;
     background-color: var(--a-background-primary);
-    border: 1px solid var(--a-primary-dark-10);
+    border: 1px solid var(--a-primary-transparent-50);
+    border-radius: 8px;
   }
 
   .apos-area-widget-wrapper--foreign .apos-area-widget-inner .apos-area-widget__breadcrumbs {
@@ -627,13 +728,34 @@ export default {
     @include type-help;
     padding: 2px;
     white-space: nowrap;
+    color: var(--a-base-1);
+    transition: background-color 0.3s var(--a-transition-timing-bounce);
     &:hover {
       cursor: pointer;
     }
   }
 
+  .apos-area-widget__breadcrumbs:hover .apos-area-widget__breadcrumb,
+  .apos-area-widget__breadcrumbs:hover .apos-area-widget__breadcrumb ::v-deep .apos-button__content {
+    color: var(--a-text-primary);
+  }
+
+  .apos-area-widget__breadcrumb--widget-icon {
+    padding: 3px 2px 2px;
+    background-color: var(--a-primary-transparent-10);
+    color: var(--a-primary);
+    border-radius: 4px;
+    margin-right: 2px;
+    transition: background-color 0.3s var(--a-transition-timing-bounce);
+  }
+
+  .apos-area-widget__breadcrumbs:hover .apos-area-widget__breadcrumb--widget-icon {
+    background-color: var(--a-primary-transparent-25);
+  }
+
   .apos-area-widget__breadcrumb--icon {
     padding: 2px;
+    color: var(--a-text-primary);
   }
 
   .apos-area-widget__breadcrumb ::v-deep .apos-button {

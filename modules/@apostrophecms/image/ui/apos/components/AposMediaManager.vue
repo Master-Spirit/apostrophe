@@ -23,8 +23,13 @@
         @click="confirmAndCancel"
       />
     </template>
-    <template v-if="relationshipField" #primaryControls>
+    <template #primaryControls>
+      <AposUtilityOperations
+        :module-options="moduleOptions"
+        :has-relationship-field="!!relationshipField"
+      />
       <AposButton
+        v-if="relationshipField"
         type="primary"
         :label="saveRelationshipLabel"
         :disabled="!!relationshipErrors"
@@ -90,7 +95,9 @@
         >
           <AposMediaManagerEditor
             v-show="editing"
-            :media="editing" :selected="selected"
+            :media="editing"
+            :selected="selected"
+            :is-modified="isModified"
             :module-labels="moduleLabels"
             @back="updateEditing(null)" @saved="updateMedia"
             @modified="editorModified"
@@ -120,7 +127,7 @@ export default {
       required: true
     }
   },
-  emits: [ 'safe-close', 'archive', 'save', 'search' ],
+  emits: [ 'safe-close', 'archive', 'save', 'search', 'piece-relationship-query' ],
   data() {
     return {
       items: [],
@@ -224,9 +231,11 @@ export default {
     this.modal.active = true;
     await this.getMedia({ tags: true });
     apos.bus.$on('content-changed', this.onContentChanged);
+    apos.bus.$on('command-menu-manager-close', this.confirmAndCancel);
   },
   destroyed() {
     apos.bus.$off('content-changed', this.onContentChanged);
+    apos.bus.$off('command-menu-manager-close', this.confirmAndCancel);
   },
   methods: {
     // Update our current idea of whether the doc in the right hand rail
@@ -248,6 +257,10 @@ export default {
             qs.choices = filter.name;
           }
         });
+      }
+
+      if (this.relationshipField) {
+        apos.bus.$emit('piece-relationship-query', qs);
       }
 
       // Avoid undefined properties.
@@ -310,6 +323,21 @@ export default {
       this.uploading = false;
       await this.getMedia();
 
+      if (Array.isArray(imgIds) && imgIds.length && this.items.length === 0) {
+        const [ widgetOptions = {} ] = apos.area.widgetOptions;
+        const [ width, height ] = widgetOptions.minSize || [];
+        await apos.notify('apostrophe:minSize', {
+          type: 'danger',
+          icon: 'alert-circle-icon',
+          dismiss: true,
+          interpolate: {
+            width,
+            height
+          }
+        });
+        this.updateEditing(null);
+        return;
+      }
       if (Array.isArray(imgIds) && imgIds.length) {
         this.checked = this.checked.concat(imgIds);
 

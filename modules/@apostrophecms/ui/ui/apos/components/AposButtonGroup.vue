@@ -1,5 +1,9 @@
 <template>
-  <div class="apos-button-group" :class="modifierClass" role="menubar">
+  <div
+    class="apos-button-group"
+    :class="modifierClass"
+    role="menubar"
+  >
     <div class="apos-button-group__inner">
       <slot />
     </div>
@@ -23,8 +27,7 @@ export default {
     }
   },
   data() {
-    return {
-    };
+    return {};
   },
   computed: {
     modifierClass() {
@@ -65,9 +68,10 @@ export default {
     overflow: hidden;
     padding: 5px;
     border: 1px solid var(--a-background-inverted);
-    border-radius: var(--a-border-radius);
+    border-radius: var(--a-border-radius-large);
     color: var(--a-text-primary);
     background-color: var(--a-background-primary);
+    gap: 4px;
   }
 
   .apos-button-group--vertical .apos-button-group__inner {

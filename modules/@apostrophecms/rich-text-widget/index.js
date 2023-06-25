@@ -2,6 +2,7 @@
 // editor does not use a modal; instead you edit in context on the page.
 
 const sanitizeHtml = require('sanitize-html');
+const cheerio = require('cheerio');
 
 module.exports = {
   extend: '@apostrophecms/widget-type',
@@ -9,8 +10,23 @@ module.exports = {
     icon: 'format-text-icon',
     label: 'apostrophe:richText',
     contextual: true,
+    placeholder: true,
+    placeholderText: 'apostrophe:richTextPlaceholder',
+    placeholderTextWithInsertMenu: 'apostrophe:richTextPlaceholderWithInsertMenu',
     defaultData: { content: '' },
     className: false,
+    linkWithType: [ '@apostrophecms/any-page-type' ],
+    // For permalinks and images. For efficiency we make
+    // one query
+    project: {
+      title: 1,
+      aposDocId: 1,
+      _url: 1,
+      attachment: 1,
+      alt: 1,
+      credit: 1,
+      creditUrl: 1
+    },
     minimumDefaultOptions: {
       toolbar: [
         'styles',
@@ -18,6 +34,7 @@ module.exports = {
         'italic',
         'strike',
         'link',
+        'anchor',
         'bulletList',
         'orderedList',
         'blockquote'
@@ -51,12 +68,17 @@ module.exports = {
         component: 'AposTiptapStyles',
         label: 'apostrophe:richTextStyles'
       },
+      table: {
+        component: 'AposTiptapTable',
+        label: 'apostrophe:table'
+      },
       '|': { component: 'AposTiptapDivider' },
       bold: {
         component: 'AposTiptapButton',
         label: 'apostrophe:richTextBold',
         icon: 'format-bold-icon',
-        command: 'toggleBold'
+        command: 'toggleBold',
+        iconSize: 18
       },
       italic: {
         component: 'AposTiptapButton',
@@ -70,6 +92,26 @@ module.exports = {
         icon: 'format-underline-icon',
         command: 'toggleUnderline'
       },
+      strike: {
+        component: 'AposTiptapButton',
+        label: 'apostrophe:richTextStrikethrough',
+        icon: 'format-strikethrough-variant-icon',
+        command: 'toggleStrike',
+        iconSize: 14
+      },
+      superscript: {
+        component: 'AposTiptapButton',
+        label: 'apostrophe:superscript',
+        icon: 'format-superscript-icon',
+        command: 'toggleSuperscript'
+      },
+      subscript: {
+        component: 'AposTiptapButton',
+        label: 'apostrophe:subscript',
+        icon: 'format-subscript-icon',
+        command: 'toggleSubscript'
+      },
+
       horizontalRule: {
         component: 'AposTiptapButton',
         label: 'apostrophe:richTextHorizontalRule',
@@ -79,7 +121,13 @@ module.exports = {
       link: {
         component: 'AposTiptapLink',
         label: 'apostrophe:richTextLink',
-        icon: 'link-icon'
+        icon: 'link-icon',
+        iconSize: 18
+      },
+      anchor: {
+        component: 'AposTiptapAnchor',
+        label: 'apostrophe:richTextAnchor',
+        icon: 'anchor-icon'
       },
       bulletList: {
         component: 'AposTiptapButton',
@@ -93,17 +141,12 @@ module.exports = {
         icon: 'format-list-numbered-icon',
         command: 'toggleOrderedList'
       },
-      strike: {
-        component: 'AposTiptapButton',
-        label: 'apostrophe:richTextStrikethrough',
-        icon: 'format-strikethrough-variant-icon',
-        command: 'toggleStrike'
-      },
       blockquote: {
         component: 'AposTiptapButton',
         label: 'apostrophe:richTextBlockquote',
         icon: 'format-quote-close-icon',
-        command: 'toggleBlockquote'
+        command: 'toggleBlockquote',
+        iconSize: 20
       },
       codeBlock: {
         component: 'AposTiptapButton',
@@ -158,31 +201,57 @@ module.exports = {
         label: 'apostrophe:richTextHighlight',
         icon: 'format-color-highlight-icon',
         command: 'toggleHighlight'
+      },
+      image: {
+        component: 'AposTiptapImage',
+        label: 'apostrophe:image',
+        icon: 'image-icon'
+      }
+    },
+    editorInsertMenu: {
+      table: {
+        icon: 'table-icon',
+        label: 'apostrophe:table',
+        action: 'insertTable',
+        description: 'apostrophe:tableDescription'
+      },
+      image: {
+        icon: 'image-icon',
+        label: 'apostrophe:image',
+        description: 'apostrophe:imageDescription',
+        component: 'AposImageControlDialog'
       }
     },
     // Additional properties used in executing tiptap commands
     // Will be mixed in automatically for developers
     tiptapTextCommands: {
-      setNode: [ 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre' ],
+      setNode: [ 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'div' ],
       toggleMark: [
         'b', 'strong', 'code', 'mark', 'em', 'i',
-        'a', 's', 'del', 'strike', 'span', 'u'
+        'a', 's', 'del', 'strike', 'span', 'u', 'anchor',
+        'superscript', 'subscript'
       ],
       wrapIn: [ 'blockquote' ]
     },
     tiptapTypes: {
       heading: [ 'h1', 'h2', 'h3', 'h4', 'h5', 'h6' ],
       paragraph: [ 'p' ],
-      textStyle: [ 'span' ],
       code: [ 'code' ],
       bold: [ 'strong', 'b' ],
       strike: [ 's', 'del', 'strike' ],
       italic: [ 'i', 'em' ],
       highlight: [ 'mark' ],
       link: [ 'a' ],
+      anchor: [ 'span' ],
       underline: [ 'u' ],
       codeBlock: [ 'pre' ],
-      blockquote: [ 'blockquote' ]
+      blockquote: [ 'blockquote' ],
+      superscript: [ 'sup' ],
+      subscript: [ 'sub' ],
+      // Generic div type, usually used with classes,
+      // and for A2 content migration. Intentionally not
+      // given a nicer-sounding name
+      div: [ 'div' ]
     }
   },
   beforeSuperClass(self) {
@@ -193,7 +262,8 @@ module.exports = {
   },
   icons: {
     'format-text-icon': 'FormatText',
-    'format-color-highlight-icon': 'FormatColorHighlight'
+    'format-color-highlight-icon': 'FormatColorHighlight',
+    'table-icon': 'Table'
   },
   methods(self) {
     return {
@@ -203,7 +273,54 @@ module.exports = {
         return widget.content;
       },
 
+      // Handle relationships to permalinks and inline images
       async load(req, widgets) {
+        try {
+          return await self.loadInlineRelationships(req, widgets, [ 'permalinkIds', 'imageIds' ]);
+        } catch (e) {
+          console.error(e);
+          throw e;
+        }
+      },
+
+      // Load the permalink and image relationships for the given rich text
+      // widgets, using a single efficient query. `names` is an array of
+      // properties that contain arrays of doc IDs, such as `permalinkIds`.
+      // An implementation detail of `load` for this widget. After this method
+      // each widget has a `_relatedDocs` property. Note this is a mixed
+      // collection of permalink docs and inline image docs
+      async loadInlineRelationships(req, widgets, names) {
+        const widgetsByDocId = new Map();
+        let ids = [];
+        for (const widget of widgets) {
+          for (const name of names) {
+            if (!widget[name]) {
+              continue;
+            }
+            for (const id of widget[name]) {
+              const docWidgets = widgetsByDocId.get(id) || [];
+              docWidgets.push(widget);
+              widgetsByDocId.set(id, docWidgets);
+              ids.push(id);
+            }
+          }
+        }
+        ids = [ ...new Set(ids) ];
+        if (!ids.length) {
+          return;
+        }
+        const docs = await self.apos.doc.find(req, {
+          aposDocId: {
+            $in: ids
+          }
+        }).project(self.options.project).toArray();
+        for (const doc of docs) {
+          const widgets = widgetsByDocId.get(doc.aposDocId) || [];
+          for (const widget of widgets) {
+            widget._relatedDocs = widget._relatedDocs || [];
+            widget._relatedDocs.push(doc);
+          }
+        }
       },
 
       // Convert area rich text options into a valid sanitize-html
@@ -250,9 +367,15 @@ module.exports = {
             'pre',
             'code'
           ],
-          underline: [ 'u' ]
+          underline: [ 'u' ],
+          anchor: [ 'span' ],
+          superscript: [ 'sup' ],
+          subscript: [ 'sub' ],
+          table: [ 'table', 'tr', 'td', 'th' ],
+          image: [ 'figure', 'img', 'figcaption' ],
+          div: [ 'div' ]
         };
-        for (const item of options.toolbar || []) {
+        for (const item of self.combinedItems(options)) {
           if (simple[item]) {
             for (const tag of simple[item]) {
               allowedTags[tag] = true;
@@ -294,14 +417,41 @@ module.exports = {
           alignJustify: {
             tag: '*',
             attributes: [ 'style' ]
-          }
+          },
+          anchor: {
+            tag: 'span',
+            attributes: [ 'id' ]
+          },
+          table: [
+            {
+              tag: 'td',
+              attributes: [ 'colspan', 'rowspan' ]
+            },
+            {
+              tag: 'th',
+              attributes: [ 'colspan', 'rowspan' ]
+            }
+          ],
+          image: [
+            {
+              tag: 'figure',
+              attributes: [ 'class' ]
+            },
+            {
+              tag: 'img',
+              attributes: [ 'src', 'alt' ]
+            }
+          ]
         };
-        for (const item of options.toolbar || []) {
+        for (const item of self.combinedItems(options)) {
           if (simple[item]) {
-            for (const attribute of simple[item].attributes) {
-              allowedAttributes[simple[item].tag] = allowedAttributes[simple[item].tag] || [];
-              allowedAttributes[simple[item].tag].push(attribute);
-              allowedAttributes[simple[item].tag] = [ ...new Set(allowedAttributes[simple[item].tag]) ];
+            const entries = Array.isArray(simple[item]) ? simple[item] : [ simple[item] ];
+            for (const entry of entries) {
+              for (const attribute of entry.attributes) {
+                allowedAttributes[entry.tag] = allowedAttributes[entry.tag] || [];
+                allowedAttributes[entry.tag].push(attribute);
+                allowedAttributes[entry.tag] = [ ...new Set(allowedAttributes[entry.tag]) ];
+              }
             }
           }
         }
@@ -336,7 +486,7 @@ module.exports = {
             }
           }
         };
-        for (const item of options.toolbar || []) {
+        for (const item of self.combinedItems(options)) {
           if (simple[item]) {
             if (!allowedStyles[simple[item].selector]) {
               allowedStyles[simple[item].selector] = {};
@@ -357,7 +507,7 @@ module.exports = {
 
       toolbarToAllowedClasses(options) {
         const allowedClasses = {};
-        if ((options.toolbar || []).includes('styles')) {
+        if (self.combinedItems(options).includes('styles')) {
           for (const style of options.styles || []) {
             const tag = style.tag;
             const classes = self.getStyleClasses(style);
@@ -371,6 +521,12 @@ module.exports = {
           allowedClasses[tag] = Object.keys(allowedClasses[tag]);
         }
         return allowedClasses;
+      },
+
+      // Returns a combined array of toolbar and insert menu items from the given
+      // set of rich text widget options
+      combinedItems(options) {
+        return [ ...(options.toolbar || []), ...(options.insert || []) ];
       },
 
       getStyleClasses(heading) {
@@ -391,22 +547,177 @@ module.exports = {
       isEmpty(widget) {
         const text = self.apos.util.htmlToPlaintext(widget.content || '');
         return !text.trim().length;
+      },
+
+      sanitizeHtml(html, options) {
+        html = sanitizeHtml(html, options);
+        html = self.sanitizeAnchors(html);
+        return html;
+      },
+
+      sanitizeAnchors(html) {
+        const $ = cheerio.load(html);
+        const seen = new Set();
+        $('[data-anchor]').each(function() {
+          const $el = $(this);
+          const anchor = $el.attr('data-anchor');
+          if (!self.validateAnchor(anchor)) {
+            return;
+          }
+          // tiptap will apply data-anchor to every tag involved in the selection
+          // at any depth. For ids and anchors this doesn't really make sense.
+          // Save the id to the first, rootmost tag involved
+          if (!seen.has(anchor)) {
+            $el.attr('id', anchor);
+            seen.add(anchor);
+          }
+        });
+        const result = $('body').html();
+        return result;
+      },
+
+      validateAnchor(anchor) {
+        if ((typeof anchor) !== 'string') {
+          return false;
+        }
+        if (!anchor.length) {
+          return false;
+        }
+        // Don't let them break the editor
+        if (anchor.startsWith('apos-')) {
+          return false;
+        }
+        return true;
+      },
+
+      // Quickly replaces rich text permalink placeholder URLs with
+      // actual, SEO-friendly URLs based on `widget._relatedDocs`
+      linkPermalinks(widget, content) {
+        // "Why no regexps?" We need to do this as quickly as we can.
+        // indexOf and lastIndexOf are much faster.
+        let i;
+        for (const doc of (widget._relatedDocs || [])) {
+          let offset = 0;
+          while (true) {
+            i = content.indexOf('apostrophe-permalink-' + doc.aposDocId, offset);
+            if (i === -1) {
+              break;
+            }
+            offset = i + ('apostrophe-permalink-' + doc.aposDocId).length;
+            let updateTitle = content.indexOf('?updateTitle=1', i);
+            if (updateTitle === i + ('apostrophe-permalink-' + doc.aposDocId).length) {
+              updateTitle = true;
+            } else {
+              updateTitle = false;
+            }
+            // If you can edit the widget, you don't want the link replaced,
+            // as that would lose the permalink if you edit the widget
+            // (but you may still want the title updated)
+            const left = content.lastIndexOf('<', i);
+            const href = content.indexOf(' href="', left);
+            const close = content.indexOf('"', href + 7);
+            if (!widget._edit) {
+              if ((left !== -1) && (href !== -1) && (close !== -1)) {
+                content = content.substring(0, href + 6) + doc._url + content.substring(close + 1);
+              } else {
+                // So we don't get stuck in an infinite loop
+                break;
+              }
+            }
+            if (!updateTitle) {
+              continue;
+            }
+            const right = content.indexOf('>', left);
+            const nextLeft = content.indexOf('<', right);
+            if ((right !== -1) && (nextLeft !== -1)) {
+              content = content.substring(0, right + 1) + self.apos.util.escapeHtml(doc.title) + content.substring(nextLeft);
+            }
+          }
+        }
+        return content;
+      },
+      // Quickly replaces inline image placeholder URLs with
+      // actual, SEO-friendly URLs based on `widget._relatedDocs`
+      linkImages(widget, content) {
+        if (widget._edit) {
+          return content;
+        }
+        // "Why no regexps?" We need to do this as quickly as we can.
+        // indexOf and lastIndexOf are much faster.
+        let i;
+        for (const doc of (widget._relatedDocs || [])) {
+          let offset = 0;
+          while (true) {
+            const target = `${self.apos.modules['@apostrophecms/image'].action}/${doc.aposDocId}/src`;
+            i = content.indexOf(target, offset);
+            if (i === -1) {
+              break;
+            }
+            offset = i + target.length;
+            // If you can edit the widget, you don't want the link replaced,
+            // as that would lose the image if you edit the widget
+            const left = content.lastIndexOf('<', i);
+            const src = content.indexOf(' src="', left);
+            const close = content.indexOf('"', src + 6);
+            if (!widget._edit) {
+              if ((left !== -1) && (src !== -1) && (close !== -1)) {
+                content = content.substring(0, src + 5) + doc.attachment._urls[self.apos.modules['@apostrophecms/image'].getLargestSize()] + content.substring(close + 1);
+              } else {
+                // So we don't get stuck in an infinite loop
+                break;
+              }
+            }
+          }
+        }
+        return content;
       }
     };
   },
   extendMethods(self) {
     return {
       async sanitize(_super, req, input, options) {
-        const rteOptions = {
-          ...self.options.defaultOptions,
-          ...options
+        try {
+          const rteOptions = {
+            ...self.options.defaultOptions,
+            ...options
+          };
+
+          const output = await _super(req, input, rteOptions);
+          const finalOptions = self.optionsToSanitizeHtml(rteOptions);
+
+          output.content = self.sanitizeHtml(input.content, finalOptions);
+
+          const permalinkAnchors = output.content.match(/"#apostrophe-permalink-[^"?]*?\?/g);
+          output.permalinkIds = (permalinkAnchors && permalinkAnchors.map(anchor => {
+            const matches = anchor.match(/apostrophe-permalink-(.*)\?/);
+            return matches[1];
+          })) || [];
+          const quotedAction = self.apos.util.regExpQuote(self.apos.modules['@apostrophecms/image'].action);
+          const imageAnchors = output.content.match(new RegExp(`${quotedAction}/([^/]+)/src`, 'g'));
+          output.imageIds = (imageAnchors && imageAnchors.map(anchor => {
+            const matches = anchor.match(new RegExp(`${quotedAction}/([^/]+)/src`));
+            return matches[1];
+          })) || [];
+          return output;
+        } catch (e) {
+          // Because the trace for template errors is not very
+          // useful, for now we log any error here up front
+          // until we improve that or this has been stable for a while
+          console.error(e);
+          throw e;
+        }
+      },
+      async output(_super, req, widget, options, _with) {
+        let content = widget.content || '';
+        content = self.linkPermalinks(widget, content);
+        content = self.linkImages(widget, content);
+        // We never modify the original widget.content because we do not want
+        // it to lose its permalinks in the database
+        const _widget = {
+          ...widget,
+          content
         };
-
-        const output = await _super(req, input, rteOptions);
-        const finalOptions = self.optionsToSanitizeHtml(rteOptions);
-
-        output.content = sanitizeHtml(input.content, finalOptions);
-        return output;
+        return _super(req, _widget, options, _with);
       },
       // Add on the core default options to use, if needed.
       getBrowserData(_super, req) {
@@ -415,9 +726,15 @@ module.exports = {
         const finalData = {
           ...initialData,
           tools: self.options.editorTools,
+          insertMenu: self.options.editorInsertMenu,
           defaultOptions: self.options.defaultOptions,
           tiptapTextCommands: self.options.tiptapTextCommands,
-          tiptapTypes: self.options.tiptapTypes
+          tiptapTypes: self.options.tiptapTypes,
+          placeholderText: self.options.placeholder && self.options.placeholderText,
+          // Not optional in presence of an insert menu, it's not acceptable UX without it
+          placeholderTextWithInsertMenu: self.options.placeholderTextWithInsertMenu,
+          linkWithType: Array.isArray(self.options.linkWithType) ? self.options.linkWithType : [ self.options.linkWithType ],
+          imageStyles: self.options.imageStyles
         };
         return finalData;
       }

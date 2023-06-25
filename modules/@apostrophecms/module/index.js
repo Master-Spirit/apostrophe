@@ -27,6 +27,7 @@
 
 const { SemanticAttributes } = require('@opentelemetry/semantic-conventions');
 const _ = require('lodash');
+const fs = require('fs');
 
 module.exports = {
 
@@ -705,8 +706,12 @@ module.exports = {
       },
 
       async executeAfterModuleInitTask() {
+        return self.executeAfterModuleTask('afterModuleInit');
+      },
+
+      async executeAfterModuleTask(when) {
         for (const [ name, info ] of Object.entries(self.tasks || {})) {
-          if (info.afterModuleInit) {
+          if (info[when]) {
             // Execute a task like @apostrophecms/asset:build or
             // @apostrophecms/db:reset which
             // must run before most modules are awake
@@ -746,6 +751,68 @@ module.exports = {
         }
       },
 
+      isShareDraftRequest(req) {
+        const { aposShareId, aposShareKey } = req.query;
+
+        return Boolean(
+          typeof aposShareId === 'string' &&
+          aposShareId.length &&
+          typeof aposShareKey === 'string' &&
+          aposShareKey.length
+        );
+      },
+
+      // Given a name such as "placeholder", look at the
+      // relevant options (nameImage and, as a fallback, nameUrl)
+      // and determine the appropriate asset URL. If nameImage is used,
+      // search the inheritance chain of the module
+      // for the best match, e.g. a file in a project-level override
+      // wins, followed by the original module in core or npm,
+      // followed by something in a base class that extends, etc.
+      // If no file is found, the method returns `undefined`.
+      //
+      // Even if `nameUrl is used, the method still corrects paths
+      // beginning with `/module` to account for the actual asset
+      // release URL (`nameUrl` is really an asset path, but for bc
+      // this is the naming pattern).
+      //
+      // In the above examples "name" should be replaced with the
+      // actual value of the name argument.
+
+      determineBestAssetUrl(name) {
+        let urlOption = self.options[`${name}Url`];
+        const imageOption = self.options[`${name}Image`];
+        if (!urlOption) {
+          if (imageOption) {
+            const chain = [ ...self.__meta.chain ].reverse();
+            for (const entry of chain) {
+              const path = `${entry.dirname}/public/${name}.${imageOption}`;
+              if (fs.existsSync(path)) {
+                urlOption = `/modules/${entry.name}/${name}.${imageOption}`;
+                break;
+              }
+            }
+          }
+        }
+        if (urlOption && urlOption.startsWith('/modules')) {
+          urlOption = self.apos.asset.url(urlOption);
+        }
+        if (urlOption) {
+          self.options[`${name}Url`] = urlOption;
+        }
+      },
+
+      // Modules that have REST APIs use this method
+      // to determine if a request is qualified to access
+      // it without restriction to the `publicApiProjection`
+      canAccessApi(req) {
+        if (self.options.guestApiAccess) {
+          return !!req.user;
+        } else {
+          return self.apos.permission.can(req, 'view-draft');
+        }
+      },
+
       // Merge in the event emitter / responder capabilities
       ...require('./lib/events.js')(self)
     };
@@ -753,6 +820,11 @@ module.exports = {
 
   handlers(self) {
     return {
+      moduleReady: {
+        executeAfterModuleReadyTask() {
+          return self.executeAfterModuleTask('afterModuleReady');
+        }
+      },
       'apostrophe:modulesRegistered': {
         addHelpers() {
           // We check this just to allow init in bootstrap tests that

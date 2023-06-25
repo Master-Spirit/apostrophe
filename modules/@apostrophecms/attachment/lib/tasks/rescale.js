@@ -3,6 +3,7 @@
 
 const _ = require('lodash');
 const fs = require('fs');
+const Promise = require('bluebird');
 
 // Regenerate all scaled images. Useful after changing the configured sizes
 
@@ -12,7 +13,7 @@ module.exports = function(self) {
     const total = await self.db.count();
     let n = 0;
     await self.each({}, argv.parallel || 1, async function(file) {
-      if (!_.includes([ 'jpg', 'png', 'gif' ], file.extension)) {
+      if (!_.includes([ 'jpg', 'png', 'gif', 'webp' ], file.extension)) {
         n++;
         console.log('Skipping a non-image attachment: ' + file.name + '.' + file.extension);
         return;
@@ -61,12 +62,12 @@ module.exports = function(self) {
           return;
         }
       }
-      for (const crop of file.crops) {
+      for (const crop of file.crops || []) {
         console.log('RECROPPING');
         const originalFile = '/attachments/' + file._id + '-' + file.name + '.' + crop.left + '.' + crop.top + '.' + crop.width + '.' + crop.height + '.' + file.extension;
         console.log('Cropping ' + tempFile + ' to ' + originalFile);
         try {
-          Promise.promisify(self.uploadfs.copyImageIn)(tempFile, originalFile, {
+          await Promise.promisify(self.uploadfs.copyImageIn)(tempFile, originalFile, {
             crop: crop,
             sizes: self.imageSizes
           });

@@ -8,7 +8,8 @@
       :class="{
         'apos-is-engaged': engaged,
         'apos-is-only-child': slatCount === 1,
-        'apos-is-selected': selected
+        'apos-is-selected': selected,
+        'apos-is-disabled': disabled,
       }"
       @keydown.prevent.space="toggleEngage"
       @keydown.prevent.enter="toggleEngage"
@@ -27,12 +28,27 @@
           :size="13"
         />
         <AposContextMenu
-          v-if="hasRelationshipSchema"
+          v-if="hasRelationshipFields && more.menu.length"
           :button="more.button"
           :menu="more.menu"
           @item-clicked="$emit('item-clicked', item)"
           menu-placement="bottom-start"
           menu-offset="40, 10"
+          :disabled="disabled"
+        />
+        <AposButton
+          class="apos-slat__editor-btn"
+          v-if="editorIcon && hasRelationshipEditor"
+          role="button"
+          :tooltip="{
+            content: editorLabel,
+            placement: 'bottom'
+          }"
+          :icon="editorIcon"
+          :icon-only="true"
+          :modifiers="['inline']"
+          @click="$emit('item-clicked', item)"
+          :disabled="disabled"
         />
         <a
           class="apos-slat__control apos-slat__control--view"
@@ -42,9 +58,16 @@
         >
           <eye-icon :size="14" class="apos-slat__control--view-icon" />
         </a>
-        <div v-if="item.attachment && item.attachment.group === 'images' && item.attachment._urls" class="apos-slat__media-preview">
+        <div
+          v-if="item.attachment &&
+            item.attachment.group === 'images' &&
+            item.attachment._urls"
+          class="apos-slat__media-preview"
+        >
           <img
-            :src="item.attachment._urls['one-sixth']"
+            :src="item.attachment._urls.uncropped
+              ? item.attachment._urls.uncropped['one-sixth']
+              : item.attachment._urls['one-sixth']"
             :alt="item.description || item.title"
             class="apos-slat__media"
           >
@@ -111,9 +134,17 @@ export default {
       type: Boolean,
       default: false
     },
-    hasRelationshipSchema: {
-      type: Boolean,
-      default: false
+    relationshipSchema: {
+      type: Array,
+      default: () => null
+    },
+    editorLabel: {
+      type: String,
+      default: null
+    },
+    editorIcon: {
+      type: String,
+      default: null
     }
   },
   emits: [ 'engage', 'disengage', 'move', 'remove', 'item-clicked', 'select' ],
@@ -128,22 +159,33 @@ export default {
           type: 'inline'
         },
         menu: [
-          {
-            label: 'Edit Relationship',
+          ...!this.editorIcon ? [ {
+            label: 'apostrophe:editRelationship',
             action: 'edit-relationship'
-          }
+          } ] : []
         ]
       }
     };
   },
   computed: {
     itemSize() {
-      const size = this.item.length.size;
+      const size = this.item.length?.size;
       if (size < 1000000) {
         return `${(size / 1000).toFixed(0)}KB`;
       } else {
         return `${(size / 1000000).toFixed(1)}MB`;
       }
+    },
+    hasRelationshipEditor() {
+      if (this.item.attachment && this.item.attachment.group === 'images') {
+        return this.relationshipSchema && this.item.attachment._isCroppable;
+      }
+      return this.relationshipSchema;
+    },
+    hasRelationshipFields() {
+      return this.hasRelationshipEditor &&
+        Array.isArray(this.relationshipSchema) &&
+        this.relationshipSchema.length;
     }
   },
   methods: {
@@ -162,11 +204,8 @@ export default {
     },
     move(dir) {
       if (this.engaged) {
-        if (dir > 0) {
-          this.$emit('move', this.item._id, 1);
-        } else {
-          this.$emit('move', this.item._id, -1);
-        }
+        const direction = dir > 0 ? 1 : -1;
+        this.$emit('move', this.item._id, direction);
       }
     },
     remove(focusNext) {
@@ -190,6 +229,12 @@ export default {
     background-color: var(--a-base-9);
     color: var(--a-text-primary);
     @include apos-transition();
+
+    &.apos-is-disabled {
+      .apos-slat__control--view {
+        pointer-events: none;
+      }
+    }
 
     &:hover {
       cursor: grab;
@@ -231,6 +276,9 @@ export default {
     &:hover {
       background-color: var(--a-primary-dark-10);
     }
+    .apos-slat__label {
+      color: var(--a-white);
+    }
   }
 
   .apos-slat-list__item--disabled {
@@ -243,6 +291,7 @@ export default {
   .apos-slat__main {
     display: flex;
     align-items: center;
+    max-width: 75%;
     & ::v-deep .trigger {
       /* This gets inline positioned and has doesn't provide an extra class to beef up, sorry */
       /* stylelint-disable-next-line declaration-no-important */
@@ -254,9 +303,12 @@ export default {
     @include type-small;
     overflow: hidden;
     margin-left: 5px;
-    max-width: 220px;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+
+  .apos-slat__editor-btn {
+    margin-right: 5px;
   }
 
   .apos-slat__control {

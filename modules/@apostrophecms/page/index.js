@@ -33,7 +33,9 @@ module.exports = {
         orphan: true,
         title: 'Archive'
       }
-    ]
+    ],
+    redirectFailedUpperCaseUrls: true,
+    relationshipSuggestionIcon: 'web-icon'
   },
   batchOperations: {
     add: {
@@ -48,6 +50,43 @@ module.exports = {
       }
     }
   },
+  commands(self) {
+    return {
+      add: {
+        [`${self.__meta.name}:create-new`]: {
+          type: 'item',
+          label: 'apostrophe:commandMenuCreateNew',
+          action: {
+            type: 'command-menu-manager-create-new'
+          },
+          permission: {
+            action: 'edit',
+            type: self.__meta.name
+          },
+          shortcut: 'C'
+        },
+        [`${self.__meta.name}:exit-manager`]: {
+          type: 'item',
+          label: 'apostrophe:commandMenuExitManager',
+          action: {
+            type: 'command-menu-manager-close'
+          },
+          shortcut: 'Q'
+        }
+      },
+      modal: {
+        [`${self.__meta.name}:manager`]: {
+          '@apostrophecms/command-menu:manager': {
+            label: '',
+            commands: [
+              `${self.__meta.name}:create-new`,
+              `${self.__meta.name}:exit-manager`
+            ]
+          }
+        }
+      }
+    };
+  },
   async init(self) {
     const { enableCacheOnDemand = true } = self.apos
       .modules['@apostrophecms/express'].options;
@@ -61,6 +100,7 @@ module.exports = {
     self.enableBrowserData();
     self.addLegacyMigrations();
     self.addMisreplicatedParkedPagesMigration();
+    self.addDuplicateParkedPagesMigration();
     await self.createIndexes();
   },
   restApiRoutes(self) {
@@ -94,22 +134,22 @@ module.exports = {
           const autocomplete = self.apos.launder.string(req.query.autocomplete);
 
           if (autocomplete.length) {
-            if (!self.apos.permission.can(req, 'edit', '@apostrophecms/any-page-type')) {
+            if (!self.apos.permission.can(req, 'view', '@apostrophecms/any-page-type')) {
               throw self.apos.error('forbidden');
             }
             return {
               // For consistency with the pieces REST API we
               // use a results property when returning a flat list
-              results: await self.getRestQuery(req).limit(10).relationships(false)
+              results: await self.getRestQuery(req).permission(false).limit(10).relationships(false)
                 .areas(false).toArray()
             };
           }
 
           if (all) {
-            if (!self.apos.permission.can(req, 'edit', '@apostrophecms/any-page-type')) {
+            if (!self.apos.permission.can(req, 'view', '@apostrophecms/any-page-type')) {
               throw self.apos.error('forbidden');
             }
-            const page = await self.getRestQuery(req).and({ level: 0 }).children({
+            const page = await self.getRestQuery(req).permission(false).and({ level: 0 }).children({
               depth: 1000,
               archived,
               orphan: null,
@@ -177,7 +217,7 @@ module.exports = {
           // Edit access to draft is sufficient to fetch either
           self.publicApiCheck(req);
           const criteria = self.getIdCriteria(_id);
-          const result = await self.getRestQuery(req).and(criteria).toObject();
+          const result = await self.getRestQuery(req).permission(false).and(criteria).toObject();
 
           if (self.options.cache && self.options.cache.api && self.options.cache.api.maxAge) {
             const { maxAge } = self.options.cache.api;
@@ -295,8 +335,9 @@ module.exports = {
       async put(req, _id) {
         _id = self.inferIdLocaleAndMode(req, _id);
         self.publicApiCheck(req);
+
         return self.withLock(req, async () => {
-          const page = await self.find(req, { _id }).toObject();
+          const page = await self.findForEditing(req, { _id }).toObject();
           if (!page) {
             throw self.apos.error('notfound');
           }
@@ -379,7 +420,7 @@ module.exports = {
         },
         ':_id/localize': async (req) => {
           const _id = self.inferIdLocaleAndMode(req, req.params._id);
-          const draft = await self.findOneForEditing(req.clone({
+          const draft = await self.findOneForLocalizing(req.clone({
             mode: 'draft'
           }), {
             aposDocId: _id.split(':')[0]
@@ -411,24 +452,10 @@ module.exports = {
           if (!published) {
             throw self.apos.error('notfound');
           }
-          return self.withLock(req, async () => {
-            const manager = self.apos.doc.getManager(published.type);
-            manager.emit('beforeUnpublish', req, published);
-            await self.apos.doc.delete(req.clone({
-              mode: 'published'
-            }), published);
-            await self.apos.doc.db.updateOne({
-              _id: published._id.replace(':published', ':draft')
-            }, {
-              $set: {
-                modified: 1
-              },
-              $unset: {
-                lastPublishedAt: 1
-              }
-            });
-            return true;
-          });
+          return self.withLock(
+            req,
+            async () => self.unpublish(req, published)
+          );
         },
         ':_id/submit': async (req) => {
           const _id = self.inferIdLocaleAndMode(req, req.params._id);
@@ -487,6 +514,28 @@ module.exports = {
             throw self.apos.error('invalid');
           }
           return self.revertPublishedToPrevious(req, published);
+        },
+        ':_id/share': async (req) => {
+          const { _id } = req.params;
+          const share = self.apos.launder.boolean(req.body.share);
+
+          if (!_id) {
+            throw self.apos.error('invalid');
+          }
+
+          const draft = await self.findOneForEditing(req, {
+            _id
+          });
+
+          if (!draft || draft.aposMode !== 'draft') {
+            throw self.apos.error('notfound');
+          }
+
+          const sharedDoc = share
+            ? await self.share(req, draft)
+            : await self.unshare(req, draft);
+
+          return sharedDoc;
         }
       },
       get: {
@@ -769,6 +818,14 @@ database.`);
         browserOptions.quickCreate = self.options.quickCreate && self.apos.permission.can(req, 'edit', '@apostrophecms/any-page-type', 'draft');
         browserOptions.localized = true;
         browserOptions.autopublish = false;
+        // A list of all valid page types, including parked pages etc. This is
+        // not a menu of choices for creating a page manually
+        browserOptions.validPageTypes = self.apos.instancesOf('@apostrophecms/page-type').map(module => module.__meta.name);
+        browserOptions.canEdit = self.apos.permission.can(req, 'edit', '@apostrophecms/any-page-type', 'draft');
+        browserOptions.canLocalize = browserOptions.canEdit &&
+          browserOptions.localized &&
+          Object.keys(self.apos.i18n.locales).length > 1 &&
+          Object.values(self.apos.i18n.locales).some(locale => locale._edit);
         return browserOptions;
       },
       // Returns a query that finds pages the current user can edit
@@ -1347,6 +1404,25 @@ database.`);
         const manager = self.apos.doc.getManager(draft.type);
         return manager.publish(req, draft, options);
       },
+
+      // Unpublish a page
+      async unpublish(req, page) {
+        const manager = self.apos.doc.getManager(page.type);
+        return manager.unpublish(req, page);
+      },
+
+      // Share a draft
+      async share(req, draft) {
+        const manager = self.apos.doc.getManager(draft.type);
+        return manager.share(req, draft);
+      },
+
+      // Unshare a draft
+      async unshare(req, draft) {
+        const manager = self.apos.doc.getManager(draft.type);
+        return manager.unshare(req, draft);
+      },
+
       // Localize the draft, i.e. copy it to another locale, creating
       // that locale's draft for the first time if necessary. By default
       // existing documents are not updated
@@ -1501,6 +1577,7 @@ database.`);
         if (self.isFound(req)) {
           return;
         }
+
         if (req.user && (req.mode === 'published')) {
           // Try again in draft mode
           try {
@@ -1549,6 +1626,12 @@ database.`);
             // Nonfatal, we were just probing
           }
         }
+
+        // If uppercase letters in URL, try with lowercase
+        if (self.options.redirectFailedUpperCaseUrls && /[A-Z]/.test(req.path)) {
+          req.redirect = self.apos.url.build(req.path.toLowerCase(), req.query);
+        }
+
         // Give all modules a chance to save the day
         await self.emit('notFound', req);
         // Are we happy now?
@@ -1840,7 +1923,12 @@ database.`);
           } else {
             parentSlug = item.parent;
           }
-          return self.findOneForEditing(req, { slug: parentSlug });
+          return self.findOneForEditing(req, {
+            slug: parentSlug
+          }, {
+            areas: false,
+            relationships: false
+          });
         }
         async function findExisting() {
           return self.findOneForEditing(req, { parkedId: item.parkedId });
@@ -1873,7 +1961,10 @@ database.`);
           delete _item._children;
           if (!parent) {
             // Parking the home page for the first time
-            _item.aposDocId = self.apos.util.generateId();
+            _item.aposDocId = await self.apos.doc.bestAposDocId({
+              level: 0,
+              slug: '/'
+            });
             _item.path = _item.aposDocId;
             _item.lastPublishedAt = new Date();
             return self.apos.doc.insert(req, _item);
@@ -1915,6 +2006,63 @@ database.`);
         const count = await self.apos.doc.db.updateOne({ slug: slug }, { $unset: { parked: 1 } });
         if (!count) {
           throw 'No page with that slug was found.';
+        }
+      },
+      // Reattach a page as the last child of the home page even if
+      // the page tree properties are corrupted
+      async reattachTask(argv) {
+        if (argv._.length !== 2) {
+          throw new Error('Wrong number of arguments');
+        }
+        const modes = [ 'draft', 'published' ];
+        const slugOrId = argv._[1];
+        for (const mode of modes) {
+          // Note that page moves are autopublished
+          const req = self.apos.task.getReq({
+            mode
+          });
+          const home = await self.findOneForEditing(req, {
+            slug: '/'
+          });
+          if (!home) {
+            throw `No home page was found in ${req.locale}. Exiting.`;
+          }
+          const page = await self.findOneForEditing(req, {
+            $or: [
+              {
+                slug: slugOrId
+              },
+              {
+                _id: slugOrId
+              }
+            ]
+          });
+          if (!page) {
+            console.log(`No page with that slug or _id was found in ${req.locale}:${req.mode}.`);
+          } else {
+            const rank = (await self.apos.doc.db.find({
+              path: self.matchDescendants(home),
+              aposLocale: req.locale,
+              level: home.level + 1
+            }).project({ rank: 1 }).sort({ rank: 1 }).toArray()).reduce((memo, page) => Math.max(memo, page.rank), 0) + 1;
+            page.path = `${home.path}/${page.aposDocId}`;
+            page.rank = rank;
+            const $set = {
+              path: page.path,
+              rank: page.rank,
+              aposLastTargetId: home.aposDocId,
+              aposLastPosition: 'lastChild'
+            };
+            if (argv['new-slug']) {
+              $set.slug = argv['new-slug'];
+            }
+            await self.apos.doc.db.updateOne({
+              _id: page._id
+            }, {
+              $set
+            });
+            console.log(`Reattached as the last child of the home page in ${req.locale}:${req.mode}.`);
+          }
         }
       },
       // Invoked by the @apostrophecms/version module.
@@ -2051,12 +2199,12 @@ database.`);
       // consult this method.
       getBaseUrl(req) {
         const hostname = self.apos.i18n.locales[req.locale].hostname;
-        if (hostname) {
-          return `${req.protocol}://${hostname}`;
-        } else {
-          return self.apos.baseUrl || '';
-        }
+
+        return hostname
+          ? `${req.protocol}://${hostname}`
+          : (self.apos.baseUrl || '');
       },
+
       // Implements a simple batch operation like publish or unpublish.
       // Pass `req`, the `name` of a configured batch operation,
       // and an async function that accepts (req, page, data) and
@@ -2131,7 +2279,7 @@ database.`);
           .applyBuildersSafely(req.query);
         // Minimum standard for a REST query without a public projection
         // is being allowed to view drafts on the site
-        if (!self.apos.permission.can(req, 'view-draft')) {
+        if (!self.canAccessApi(req)) {
           if (!self.options.publicApiProjection) {
             // Shouldn't be needed thanks to publicApiCheck, but be sure
             query.and({
@@ -2162,6 +2310,9 @@ database.`);
       async findOneForEditing(req, criteria, builders) {
         return self.findForEditing(req, criteria, builders).toObject();
       },
+      async findOneForLocalizing(req, criteria, builders) {
+        return self.findForEditing(req, criteria, builders).toObject();
+      },
       // Throws a `notfound` exception if a public API projection is
       // not specified and the user does not have the `view-draft` permission,
       // which all roles capable of editing the site at all will have. This is needed because
@@ -2169,7 +2320,7 @@ database.`);
       // we also want to flunk all public access to REST APIs if not specifically configured.
       publicApiCheck(req) {
         if (!self.options.publicApiProjection) {
-          if (!self.apos.permission.can(req, 'view-draft')) {
+          if (!self.canAccessApi(req)) {
             throw self.apos.error('notfound');
           }
         }
@@ -2276,6 +2427,64 @@ database.`);
             }
           }
         });
+      },
+      addDuplicateParkedPagesMigration() {
+        self.apos.migration.add('duplicate-parked-pages', async () => {
+          let parkedPages = await self.apos.doc.db.find({
+            parkedId: {
+              $ne: null
+            }
+          }).toArray();
+          const parkedIds = [ ...new Set(parkedPages.map(page => page.parkedId)) ];
+          const names = Object.keys(self.apos.i18n.locales);
+          const locales = [
+            ...names.map(locale => `${locale}:draft`),
+            ...names.map(locale => `${locale}:published`),
+            ...names.map(locale => `${locale}:previous`)
+          ];
+          let changes = 0;
+          const winners = new Map();
+          for (const locale of locales) {
+            for (const parkedId of parkedIds) {
+              let matches = parkedPages.filter(page =>
+                (page.parkedId === parkedId) &&
+                (page.aposLocale === locale)
+              );
+              if (matches.length > 0) {
+                if (!winners.has(parkedId)) {
+                  winners.set(parkedId, matches[0].aposDocId);
+                }
+              }
+              if (matches.length > 1) {
+                matches = matches.sort((a, b) => a.createdAt - b.createdAt);
+                const ids = matches.slice(1).map(page => page._id);
+                await self.apos.doc.db.removeMany({
+                  _id: {
+                    $in: ids
+                  }
+                });
+                parkedPages = parkedPages.filter(page => !ids.includes(page._id));
+                changes++;
+              }
+            }
+          }
+          const idChanges = [];
+          for (const parkedId of parkedIds) {
+            const aposDocId = winners.get(parkedId);
+            const matches = parkedPages.filter(page => page.parkedId === parkedId);
+            for (const match of matches) {
+              if (match.aposDocId !== aposDocId) {
+                idChanges.push([ match._id, match._id.replace(match.aposDocId, aposDocId) ]);
+              }
+            }
+          }
+          if (idChanges.length) {
+            // Also calls self.apos.attachment.recomputeAllDocReferences
+            await self.apos.doc.changeDocIds(idChanges);
+          } else if (changes > 0) {
+            await self.apos.attachment.recomputeAllDocReferences();
+          }
+        });
       }
     };
   },
@@ -2291,6 +2500,10 @@ database.`);
       unpark: {
         usage: 'Usage: node app @apostrophecms/page:unpark /page/slug\n\nThis unparks a page that was formerly locked in a specific\nposition in the page tree.',
         task: self.unparkTask
+      },
+      reattach: {
+        usage: 'Usage: node app @apostrophecms/page:reattach _id-or-slug',
+        task: self.reattachTask
       }
     };
   }

@@ -103,7 +103,9 @@ export default {
   data() {
     return {
       // Updated by both the context prop and any content-changed apos events
-      context: this.doc
+      context: this.doc,
+      // Custom context menu operations
+      customOperations: apos.modules['@apostrophecms/doc'].contextOperations
     };
   },
   computed: {
@@ -123,7 +125,7 @@ export default {
             action: 'edit'
           }
         ] : []),
-        ...((this.showPreview && this.context._url) ? [
+        ...((this.showPreview && this.hasUrl) ? [
           {
             label: 'apostrophe:preview',
             action: 'preview'
@@ -147,6 +149,7 @@ export default {
             action: 'localize'
           }
         ] : []),
+        ...this.customMenusByContext,
         ...((this.showDiscardDraft && this.canDiscardDraft) ? [
           {
             label: this.context.lastPublishedAt ? 'apostrophe:discardDraft' : 'apostrophe:deleteDraft',
@@ -161,6 +164,13 @@ export default {
             modifiers: [ 'danger' ]
           }
         ] : []),
+        ...(this.canUnpublish ? [
+          {
+            label: 'apostrophe:unpublish',
+            action: 'unpublish',
+            modifiers: [ 'danger' ]
+          }
+        ] : []),
         ...(this.showRestore && this.canRestore ? [
           {
             label: 'apostrophe:restore',
@@ -169,6 +179,32 @@ export default {
         ] : [])
       ];
       return menu;
+    },
+    customMenusByContext() {
+      if (!this.canEdit) {
+        return [];
+      }
+
+      const menus = this.customOperationsByContext
+        .map(op => ({
+          label: op.label,
+          action: op.action,
+          modifiers: op.modifiers || []
+        }));
+      menus.sort((a, b) => a.modifiers.length - b.modifiers.length);
+      return menus;
+    },
+    customOperationsByContext() {
+      return this.customOperations.filter(op => {
+        if (typeof op.manuallyPublished === 'boolean' && op.manuallyPublished !== this.manuallyPublished) {
+          return false;
+        }
+        if (typeof op.hasUrl === 'boolean' && op.hasUrl !== this.hasUrl) {
+          return false;
+        }
+
+        return op.context === 'update' && this.isUpdateOperation;
+      });
     },
     moduleName() {
       if (apos.modules[this.context.type].action === apos.modules['@apostrophecms/page'].action) {
@@ -179,6 +215,12 @@ export default {
     },
     moduleOptions() {
       return apos.modules[this.moduleName];
+    },
+    isUpdateOperation() {
+      return !!this.context._id;
+    },
+    hasUrl() {
+      return !!this.context._url;
     },
     canPublish() {
       if (this.context._id) {
@@ -195,13 +237,16 @@ export default {
       }
     },
     canDismissSubmission() {
-      return this.context.submitted && (this.canPublish || (this.context.submitted.byId === apos.login.user._id));
+      return this.canEdit && this.context.submitted && (this.canPublish || (this.context.submitted.byId === apos.login.user._id));
     },
     canDiscardDraft() {
       if (!this.manuallyPublished) {
         return false;
       }
       if (!this.context._id) {
+        return false;
+      }
+      if (!this.canEdit) {
         return false;
       }
       return (
@@ -213,10 +258,12 @@ export default {
       );
     },
     canLocalize() {
-      return (Object.keys(apos.i18n.locales).length > 1) && this.moduleOptions.localized && this.context._id;
+      return this.moduleOptions.canLocalize &&
+        this.context._id;
     },
     canArchive() {
       return (
+        this.canEdit &&
         this.context._id &&
         !this.moduleOptions.singleton &&
         !this.context.archived &&
@@ -224,11 +271,24 @@ export default {
         ((this.moduleOptions.canPublish && this.context.lastPublishedAt) || !this.manuallyPublished)
       );
     },
+    canUnpublish() {
+      return (
+        this.canEdit &&
+        !this.context.parked &&
+        this.moduleOptions.canPublish &&
+        this.context.lastPublishedAt &&
+        this.manuallyPublished
+      );
+    },
     canCopy() {
-      return this.canEdit && !this.moduleOptions.singleton && this.context._id;
+      return this.canEdit &&
+        this.moduleOptions.canEdit &&
+        !this.moduleOptions.singleton &&
+        this.context._id;
     },
     canRestore() {
       return (
+        this.canEdit &&
         this.context._id &&
         this.context.archived &&
         ((this.moduleOptions.canPublish && this.context.lastPublishedAt) || !this.manuallyPublished)
@@ -274,11 +334,18 @@ export default {
   },
   mounted() {
     apos.bus.$on('content-changed', this.onContentChanged);
+    apos.bus.$on('command-menu-admin-bar-discard-draft', this.customDiscardDraft);
   },
   destroyed() {
     apos.bus.$off('content-changed', this.onContentChanged);
+    apos.bus.$off('command-menu-admin-bar-discard-draft', this.customDiscardDraft);
   },
   methods: {
+    customDiscardDraft() {
+      if (this.showDiscardDraft && this.canDiscardDraft) {
+        this.menuHandler('discardDraft');
+      }
+    },
     async onContentChanged(e) {
       if (e.doc && (e.doc._id === this.context._id)) {
         this.context = e.doc;
@@ -297,6 +364,11 @@ export default {
       }
     },
     menuHandler(action) {
+      const operation = this.customOperations.find(op => op.action === action);
+      if (operation) {
+        this.customAction(this.context, operation);
+        return;
+      }
       this[action](this.context);
     },
     async edit(doc) {
@@ -318,6 +390,13 @@ export default {
           this.$emit('close', doc);
         }
       }
+      // Because the page or piece manager might give us just a projected,
+      // minimum number of properties otherwise
+      const complete = await apos.http.get(`${this.moduleOptions.action}/${doc._id}`, {
+        busy: true
+      });
+      Object.assign(doc, complete);
+
       apos.bus.$emit('admin-menu-click', {
         itemName: `${this.moduleName}:editor`,
         props: {
@@ -326,6 +405,12 @@ export default {
             _id: doc._id
           }
         }
+      });
+    },
+    async customAction(doc, operation) {
+      await apos.modal.execute(operation.modal, {
+        moduleName: operation.moduleName,
+        doc
       });
     },
     async localize(doc) {

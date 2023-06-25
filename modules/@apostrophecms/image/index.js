@@ -1,4 +1,5 @@
 const _ = require('lodash');
+
 // A subclass of `@apostrophecms/piece-type`, `@apostrophecms/image` establishes a library
 // of uploaded images in formats suitable for use on the web.
 //
@@ -28,7 +29,37 @@ module.exports = {
     showPermissions: true,
     // Images should by default be considered "related documents" when localizing
     // another document that references them
-    relatedDocument: true
+    relatedDocument: true,
+    relationshipEditor: 'AposImageRelationshipEditor',
+    relationshipEditorLabel: 'apostrophe:editImageAdjustments',
+    relationshipEditorIcon: 'image-edit-outline',
+    relationshipFields: {
+      add: {
+        top: {
+          type: 'integer'
+        },
+        left: {
+          type: 'integer'
+        },
+        width: {
+          type: 'integer'
+        },
+        height: {
+          type: 'integer'
+        },
+        x: {
+          type: 'integer'
+        },
+        y: {
+          type: 'integer'
+        }
+      }
+    },
+    relationshipPostprocessor: 'autocrop',
+    relationshipSuggestionIcon: 'image-icon'
+  },
+  utilityOperations: {
+    remove: [ 'new' ]
   },
   fields: {
     remove: [ 'visibility' ],
@@ -91,6 +122,13 @@ module.exports = {
       }
     }
   },
+  commands(self) {
+    return {
+      remove: [
+        `${self.__meta.name}:archive-selected`
+      ]
+    };
+  },
   extendRestApiRoutes: (self) => ({
     async getAll (_super, req) {
       const pieces = await _super(req);
@@ -102,6 +140,188 @@ module.exports = {
       return pieces;
     }
   }),
+  apiRoutes: (self) => ({
+    post: {
+      async autocrop(req) {
+        if (!self.apos.permission.can(req, 'upload-attachment')) {
+          throw self.apos.error('forbidden');
+        }
+        const widgetOptions = sanitizeOptions(req.body.widgetOptions);
+        if (!widgetOptions.aspectRatio) {
+          return {
+            // This is OK because there will be further sanitization
+            // when we actually save the relationship. At this stage
+            // we only need to sanitize if we're going to autocrop
+            relationship: req.body.relationship
+          };
+        }
+        const relationship = await sanitizeRelationship(req.body.relationship);
+        for (const image of relationship) {
+          if (!closeEnough(image) && self.apos.attachment.isCroppable(image.attachment)) {
+            await autocrop(image, widgetOptions);
+          }
+        }
+        return {
+          relationship
+        };
+
+        async function sanitizeRelationship(input) {
+          const output = [];
+          if (!Array.isArray(input)) {
+            return output;
+          }
+          for (const inputImage of input) {
+            const outputImage = await sanitizeImage(inputImage);
+            if (!outputImage) {
+              continue;
+            }
+            outputImage._fields = sanitizeFields(inputImage);
+            output.push(outputImage);
+          }
+          return output;
+        }
+        function sanitizeOptions(input) {
+          if (input == null) {
+            return {};
+          }
+          if ((typeof input) !== 'object') {
+            return {};
+          }
+          if (!input.aspectRatio) {
+            return {};
+          }
+          if (!Array.isArray(input.aspectRatio)) {
+            return {};
+          }
+          const w = self.apos.launder.float(input.aspectRatio[0], 0);
+          const h = self.apos.launder.float(input.aspectRatio[1], 0);
+          if ((w <= 0) || (h <= 0)) {
+            return {};
+          }
+          return {
+            aspectRatio: [ w, h ]
+          };
+        }
+        function sanitizeFields(inputImage) {
+          const input = inputImage._fields;
+          const output = {};
+          if ((input == null) || ((typeof input) !== 'object')) {
+            return output;
+          }
+          const props = [ 'top', 'left', 'width', 'height', 'x', 'y' ];
+          for (const prop of props) {
+            if ((typeof input[prop]) === 'number') {
+              output[prop] = self.apos.launder.integer(input[prop]);
+              if (output[prop] < 0) {
+                return {};
+              }
+            }
+          }
+          const mandatory = [ 'top', 'left', 'width', 'height' ];
+          for (const prop of mandatory) {
+            if (!_.has(output, prop)) {
+              return {};
+            }
+          }
+          if (output.width === 0) {
+            return {};
+          }
+          if (output.height === 0) {
+            return {};
+          }
+          if (output.left + output.width > inputImage.attachment.width) {
+            // An older crop that does not work with a new attachment file
+            return {};
+          }
+          if (output.top + output.height > inputImage.attachment.height) {
+            // An older crop that does not work with a new attachment file
+            return {};
+          }
+          return output;
+        }
+        function sanitizeImage(input) {
+          if (!input) {
+            return null;
+          }
+          return self.find(req, {
+            _id: self.apos.launder.id(input._id)
+          }).toObject();
+        }
+        function closeEnough(image) {
+          const testRatio = image._fields ? (image._fields.width / image._fields.height)
+            : (image.attachment.width / image.attachment.height);
+          const configuredRatio = widgetOptions.aspectRatio[0] / widgetOptions.aspectRatio[1];
+          return withinOnePercent(testRatio, configuredRatio);
+        }
+        async function autocrop(image, widgetOptions) {
+          const nativeRatio = image.attachment.width / image.attachment.height;
+          const configuredRatio = widgetOptions.aspectRatio[0] / widgetOptions.aspectRatio[1];
+          let crop;
+          if (configuredRatio >= nativeRatio) {
+            const height = image.attachment.width / configuredRatio;
+            crop = {
+              top: Math.floor((image.attachment.height - height) / 2),
+              left: 0,
+              width: image.attachment.width,
+              height: Math.floor(height)
+            };
+          } else {
+            const width = image.attachment.height * configuredRatio;
+            crop = {
+              top: 0,
+              left: Math.floor((image.attachment.width - width) / 2),
+              width: Math.floor(width),
+              height: image.attachment.height
+            };
+          }
+          await self.apos.attachment.crop(req, image.attachment._id, crop);
+          image._fields = crop;
+          // For ease of testing send back the cropped image URLs now
+          image._crop = crop;
+          await self.all(image, {
+            crop,
+            annotate: true
+          });
+        }
+        // Compare two ratios and decide if they are within 1% of the
+        // largest of the two
+        function withinOnePercent(a, b) {
+          const max = Math.max(a, b);
+          a = a * 100 / max;
+          b = b * 100 / max;
+          return Math.abs(a - b) < 1;
+        }
+      }
+    }
+  }),
+  routes(self, options) {
+    return {
+      get: {
+        // Convenience route to get the URL of the image
+        // knowing only the image id. Useful in the rich text editor.
+        // Not performant for frontend use
+        ':imageId/src': async (req, res) => {
+          const size = req.query.size || self.getLargestSize();
+          try {
+            const image = await self.find(req, {
+              aposDocId: req.params.imageId
+            }).toObject();
+            if (!image) {
+              return res.status(404).send('notfound');
+            }
+            const url = image.attachment && image.attachment._urls && image.attachment._urls[size];
+            if (url) {
+              return res.redirect(image.attachment._urls[size]);
+            }
+            return res.status(404).send('notfound');
+          } catch (e) {
+            self.apos.util.error(e);
+            return res.status(500).send('error');
+          }
+        }
+      }
+    };
+  },
   methods(self) {
     return {
       // This method is available as a template helper: apos.image.first
@@ -229,11 +449,27 @@ module.exports = {
           self.getComponentName('managerModal', 'AposMediaManager'),
           { moduleName: self.__meta.name }
         );
+      },
+      getLargestSize() {
+        return self.apos.attachment.imageSizes.reduce((a, size) => {
+          return size.width > a.width ? size : a;
+        }, {
+          name: 'dummy',
+          width: 0
+        }).name;
       }
     };
   },
   extendMethods(self) {
     return {
+      getRelationshipQueryBuilderChoicesProjection(_super, query) {
+        const projection = _super(query);
+
+        return {
+          ...projection,
+          attachment: 1
+        };
+      },
       getBrowserData(_super, req) {
         const data = _super(req);
         data.components.managerModal = 'AposMediaManager';

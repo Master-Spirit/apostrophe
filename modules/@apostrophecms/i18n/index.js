@@ -11,6 +11,7 @@ const _ = require('lodash');
 const { stripIndent } = require('common-tags');
 const ExpressSessionCookie = require('express-session/session/cookie');
 const path = require('path');
+const { verifyLocales } = require('../../../lib/locales');
 
 const apostropheI18nDebugPlugin = {
   type: 'postProcessor',
@@ -201,6 +202,47 @@ module.exports = {
         req.session.cookie = new ExpressSessionCookie(aposExpressModule.sessionOptions.cookie);
         return res.redirect(self.apos.url.build(req.url, { aposCrossDomainSessionToken: null }));
       },
+      // If the `redirectToFirstLocale` option is enabled
+      // and the homepage is requested,
+      // redirects to the first locale configured with the
+      // current requested hostname when all of the locales
+      // configured with that hostname do have a prefix.
+      //
+      // However, if the request does not match any explicit
+      // hostnames assigned to locales, redirects to the first
+      // locale that does not have a configured hostname, if
+      // all the locales without a hostname do have a prefix.
+      redirectToFirstLocale(req, res, next) {
+        if (!self.options.redirectToFirstLocale) {
+          return next();
+        }
+        if (req.path !== '' && req.path !== '/') {
+          return next();
+        }
+
+        const locales = Object.values(
+          self.filterPrivateLocales(req, self.locales)
+        );
+        const localesWithoutHostname = locales.filter(
+          locale => !locale.hostname
+        );
+        const localesWithCurrentHostname = locales.filter(
+          locale => locale.hostname && locale.hostname.split(':')[0] === req.hostname
+        );
+
+        const localesToCheck = localesWithCurrentHostname.length
+          ? localesWithCurrentHostname
+          : localesWithoutHostname;
+
+        if (!localesToCheck.length || !localesToCheck.every(locale => locale.prefix)) {
+          return next();
+        }
+
+        // Add / for home page and to avoid being redirected again in the `locale` middleware:
+        const redirectUrl = `${localesToCheck[0].prefix}/`;
+
+        return res.redirect(redirectUrl);
+      },
       locale(req, res, next) {
         // Support for a single aposLocale query param that
         // also contains the mode, which is likely to occur
@@ -218,7 +260,8 @@ module.exports = {
         } else {
           locale = self.matchLocale(req);
         }
-        const localeOptions = self.locales[locale];
+        const locales = self.filterPrivateLocales(req, self.locales);
+        const localeOptions = locales[locale];
         if (localeOptions.prefix) {
           // Remove locale prefix so URL parsing can proceed normally from here
           if (req.path === localeOptions.prefix) {
@@ -285,6 +328,9 @@ module.exports = {
       post: {
         async locale(req) {
           const sanitizedLocale = self.sanitizeLocaleName(req.body.locale);
+          if (!sanitizedLocale) {
+            throw self.apos.error('invalid', 'invalid locale');
+          }
           // Clipboards transferring between locales needs to jump
           // from LocalStorage to the cross-domain session cache
           let clipboard = req.body.clipboard;
@@ -464,8 +510,9 @@ module.exports = {
       // possible the default locale is returned.
       matchLocale(req) {
         const hostname = req.hostname;
+        const locales = self.filterPrivateLocales(req, self.locales);
         let best = false;
-        for (const [ name, options ] of Object.entries(self.locales)) {
+        for (const [ name, options ] of Object.entries(locales)) {
           const matchedHostname = options.hostname
             ? (hostname === options.hostname.split(':')[0]) : null;
           const matchedPrefix = options.prefix
@@ -558,6 +605,16 @@ module.exports = {
         for (const [ name, options ] of Object.entries(self.namespaces)) {
           if (options.browser) {
             i18n[name] = self.i18next.getResourceBundle(locale, name);
+            if (!i18n[name]) {
+              // Attempt fallback to language only. This is not
+              // the full fallback support of i18next because that
+              // is difficult to tap into when calling getResourceBundle,
+              // but it should work for most situations
+              const [ lang, country ] = locale.split('-');
+              if (country) {
+                i18n[name] = self.i18next.getResourceBundle(lang, name);
+              }
+            }
           }
         }
         return i18n;
@@ -568,34 +625,10 @@ module.exports = {
             label: 'English'
           }
         };
-        const taken = {};
-        let hostnamesCount = 0;
-        for (const [ name, options ] of Object.entries(locales)) {
-          const key = (options.hostname || '__none') + ':' + (options.prefix || '__none');
-          hostnamesCount += (options.hostname ? 1 : 0);
-          if (taken[key]) {
-            throw new Error(stripIndent`
-              @apostrophecms/i18n: the locale ${name} cannot be distinguished from
-              earlier locales. Make sure it is uniquely distinguished by its hostname
-              option, prefix option or a combination of the two. One locale per site
-              may be a default with neither hostname nor prefix, and one locale per
-              hostname may be a default for that hostname without a prefix.
-            `);
-          }
-          taken[key] = true;
+        for (const locale in locales) {
+          locales[locale]._edit = true;
         }
-        if ((hostnamesCount > 0) && (hostnamesCount < Object.keys(locales).length) && (!self.apos.options.baseUrl)) {
-          throw new Error(stripIndent`
-            If some of your locales have hostnames, then they all must have
-            hostnames, or your top-level baseUrl option must be set.
-
-            In development, you can set baseUrl to http://localhost:3000
-            for testing purposes. In production it should always be set
-            to a real base URL for the site.
-          `);
-        }
-        // Make sure they are adequately distinguished by
-        // hostname and prefix
+        verifyLocales(locales, self.apos.options.baseUrl);
         return locales;
       },
       sanitizeLocaleName(locale) {
@@ -640,22 +673,91 @@ module.exports = {
       // if possible, to the corresponding version in toLocale.
       toLocaleRouteFactory(module) {
         return async (req, res) => {
-          const _id = module.inferIdLocaleAndMode(req, req.params._id);
-          const toLocale = req.params.toLocale;
-          const localeReq = req.clone({
-            locale: toLocale
-          });
-          const corresponding = await module.find(localeReq, {
-            _id: `${_id.split(':')[0]}:${localeReq.locale}:${localeReq.mode}`
-          }).toObject();
-          if (!corresponding) {
-            return res.status(404).send('not found');
+          try {
+            const _id = module.inferIdLocaleAndMode(req, req.params._id);
+            const toLocale = self.sanitizeLocaleName(req.params.toLocale);
+            if (!toLocale) {
+              return res.status(400).send('invalid locale name');
+            }
+            const localeReq = req.clone({
+              locale: toLocale
+            });
+            const corresponding = await module.find(localeReq, {
+              _id: `${_id.split(':')[0]}:${localeReq.locale}:${localeReq.mode}`
+            }).toObject();
+            if (!corresponding) {
+              return res.status(404).send('not found');
+            }
+            if (!corresponding._url) {
+              return res.status(400).send('invalid (has no URL)');
+            }
+            return res.redirect(corresponding._url);
+          } catch (e) {
+            self.apos.util.error(e);
+            return res.status(500).send('error');
           }
-          if (!corresponding._url) {
-            return res.status(400).send('invalid (has no URL)');
-          }
-          return res.redirect(corresponding._url);
         };
+      },
+      // Exclude private locales when logged out
+      filterPrivateLocales(req, locales) {
+        return req.user
+          ? locales
+          : Object.fromEntries(
+            Object
+              .entries(locales)
+              .filter(([ name, options ]) => options.private !== true)
+          );
+      },
+      // Rename a locale. This is time consuming and should be
+      // avoided when possible. If `keep` is present it must be set
+      // to either `oldLocale` or `newLocale` and indicates which version
+      // is kept in the event of a conflict
+      async rename(oldLocale, newLocale, { keep } = {}) {
+        let renamed = 0;
+        let kept = 0;
+        if (!oldLocale) {
+          throw new Error('You must specify --old');
+        }
+        if (!newLocale) {
+          throw new Error('You must specify --new');
+        }
+        if (oldLocale === newLocale) {
+          throw new Error('The old and new locales must be different');
+        }
+        if (keep && (!(keep === oldLocale) && !(keep === newLocale))) {
+          throw new Error('--keep must match --old or --new');
+        }
+        const ids = await self.apos.doc.db.find({ aposLocale: new RegExp(`^${self.apos.util.regExpQuote(oldLocale)}:`) }).project({ _id: 1 }).toArray();
+        ({
+          renamed,
+          kept
+        } = await self.apos.doc.changeDocIds(ids.map(doc => [ doc._id, doc._id.replace(`:${oldLocale}`, `:${newLocale}`) ]), {
+          keep: (keep === oldLocale) ? 'old' : (keep === newLocale) ? 'new' : false
+        }));
+        return {
+          renamed,
+          kept
+        };
+      }
+    };
+  },
+  tasks(self) {
+    return {
+      'rename-locale': {
+        usage: 'Usage: node app @apostrophecms/i18n:rename-locale --old=de-DE --new=de-de --keep=de-de',
+        async task(argv) {
+          const oldLocale = self.apos.launder.string(argv.old);
+          const newLocale = self.apos.launder.string(argv.new);
+          const keep = self.apos.launder.string(argv.keep);
+          const {
+            renamed,
+            kept
+          } = await self.rename(oldLocale, newLocale, { keep });
+          console.log(`Renamed ${renamed} documents from ${oldLocale} to ${newLocale}`);
+          if (keep) {
+            console.log(`Due to conflicts, kept ${kept} documents from ${keep}`);
+          }
+        }
       }
     };
   }

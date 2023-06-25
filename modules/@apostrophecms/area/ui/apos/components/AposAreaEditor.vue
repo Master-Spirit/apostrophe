@@ -26,9 +26,10 @@
           :context-menu-options="contextMenuOptions"
           :empty="true"
           :index="0"
-          :widget-options="options.widgets"
+          :options="options"
           :max-reached="maxReached"
           :disabled="field && field.readOnly"
+          :widget-options="options.widgets"
         />
       </template>
     </div>
@@ -38,6 +39,7 @@
         :area-id="areaId"
         :key="widget._id"
         :widget="widget"
+        :generation="generation"
         :i="i"
         :options="options"
         :next="next"
@@ -46,6 +48,7 @@
         :field-id="fieldId"
         :disabled="field && field.readOnly"
         :widget-hovered="hoveredWidget"
+        :non-foreign-widget-hovered="hoveredNonForeignWidget"
         :widget-focused="focusedWidget"
         :max-reached="maxReached"
         :rendering="rendering(widget)"
@@ -115,29 +118,31 @@ export default {
       default() {
         return {};
       }
+    },
+    generation: {
+      type: Number,
+      required: false,
+      default() {
+        return null;
+      }
     }
   },
   emits: [ 'changed' ],
   data() {
-    const validItems = this.items.filter(item => {
-      if (!window.apos.modules[`${item.type}-widget`]) {
-        console.warn(`The widget type ${item.type} exists in the content but is not configured.`);
-      }
-      return window.apos.modules[`${item.type}-widget`];
-    });
-
     return {
       addWidgetEditor: null,
       addWidgetOptions: null,
       addWidgetType: null,
       areaId: cuid(),
-      next: validItems,
+      next: this.getValidItems(),
       hoveredWidget: null,
+      hoveredNonForeignWidget: null,
       focusedWidget: null,
       contextMenuOptions: {
         menu: this.choices
       },
-      edited: {}
+      edited: {},
+      widgets: {}
     };
   },
   computed: {
@@ -163,7 +168,7 @@ export default {
       return window.apos.area;
     },
     types() {
-      return Object.keys(this.options.widgets);
+      return Object.keys(this.widgets);
     },
     maxReached() {
       return this.options.max && this.next.length >= this.options.max;
@@ -189,25 +194,40 @@ export default {
         _id: this.id,
         items: this.next
       });
+    },
+    generation() {
+      this.next = this.getValidItems();
+    }
+  },
+  created() {
+    if (this.options.groups) {
+      for (const group of Object.keys(this.options.groups)) {
+        this.widgets = {
+          ...this.options.groups[group].widgets,
+          ...this.widgets
+        };
+      }
     }
   },
   mounted() {
-    apos.bus.$on('area-updated', this.areaUpdatedHandler);
-    apos.bus.$on('widget-hover', this.updateWidgetHovered);
-    apos.bus.$on('widget-focus', this.updateWidgetFocused);
     this.bindEventListeners();
   },
   beforeDestroy() {
-    apos.bus.$off('area-updated', this.areaUpdatedHandler);
-    apos.bus.$off('widget-hover', this.updateWidgetHovered);
-    apos.bus.$off('widget-focus', this.updateWidgetFocused);
     this.unbindEventListeners();
   },
   methods: {
     bindEventListeners() {
+      apos.bus.$on('area-updated', this.areaUpdatedHandler);
+      apos.bus.$on('widget-hover', this.updateWidgetHovered);
+      apos.bus.$on('widget-focus', this.updateWidgetFocused);
+      apos.bus.$on('refreshed', this.destroyParentComponent);
       window.addEventListener('keydown', this.focusParentEvent);
     },
     unbindEventListeners() {
+      apos.bus.$off('area-updated', this.areaUpdatedHandler);
+      apos.bus.$off('widget-hover', this.updateWidgetHovered);
+      apos.bus.$off('widget-focus', this.updateWidgetFocused);
+      apos.bus.$off('refreshed', this.destroyParentComponent);
       window.removeEventListener('keydown', this.focusParentEvent);
     },
     areaUpdatedHandler(area) {
@@ -223,11 +243,14 @@ export default {
         apos.bus.$emit('widget-focus-parent', this.focusedWidget);
       }
     },
-    updateWidgetHovered(widgetId) {
-      this.hoveredWidget = widgetId;
+    updateWidgetHovered({ _id, nonForeignId }) {
+      this.hoveredWidget = _id;
+      this.hoveredNonForeignWidget = nonForeignId;
     },
     updateWidgetFocused(widgetId) {
       this.focusedWidget = widgetId;
+      // Attached to window so that modals can see the area is active
+      window.apos.focusedWidget = widgetId;
     },
     async up(i) {
       if (this.docId === window.apos.adminBar.contextId) {
@@ -342,13 +365,15 @@ export default {
       if (!this.widgetIsContextual(widget.type)) {
         const componentName = this.widgetEditorComponent(widget.type);
         apos.area.activeEditor = this;
+        apos.bus.$on('apos-refreshing', cancelRefresh);
         const result = await apos.modal.execute(componentName, {
           value: widget,
-          options: this.options.widgets[widget.type],
+          options: this.widgetOptionsByType(widget.type),
           type: widget.type,
           docId: this.docId
         });
         apos.area.activeEditor = null;
+        apos.bus.$off('apos-refreshing', cancelRefresh);
         if (result) {
           return this.update(result);
         }
@@ -388,6 +413,8 @@ export default {
       }
     },
     async update(widget) {
+      widget.aposPlaceholder = false;
+
       if (this.docId === window.apos.adminBar.contextId) {
         apos.bus.$emit('context-edited', {
           [`@${widget._id}`]: widget
@@ -418,9 +445,18 @@ export default {
       } else if (this.widgetIsContextual(name)) {
         return this.insert({
           widget: {
-            _id: cuid(),
             type: name,
-            ...this.contextualWidgetDefaultData(name)
+            ...this.contextualWidgetDefaultData(name),
+            aposPlaceholder: this.widgetHasPlaceholder(name)
+          },
+          index
+        });
+      } else if (!this.widgetHasInitialModal(name)) {
+        const widget = this.newWidget(name);
+        return this.insert({
+          widget: {
+            ...widget,
+            aposPlaceholder: this.widgetHasPlaceholder(name)
           },
           index
         });
@@ -429,7 +465,7 @@ export default {
         apos.area.activeEditor = this;
         const widget = await apos.modal.execute(componentName, {
           value: null,
-          options: this.options.widgets[name],
+          options: this.widgetOptionsByType(name),
           type: name,
           docId: this.docId
         });
@@ -441,6 +477,18 @@ export default {
           });
         }
       }
+    },
+    widgetOptionsByType(name) {
+      if (this.options.widgets) {
+        return this.options.widgets[name];
+      } else if (this.options.expanded) {
+        for (const info of Object.values(this.options.groups || {})) {
+          if (info?.widgets?.[name]) {
+            return info.widgets[name];
+          }
+        }
+      }
+      return null;
     },
     contextualWidgetDefaultData(type) {
       return this.moduleOptions.contextualWidgetDefaultData[type];
@@ -474,6 +522,12 @@ export default {
     widgetIsContextual(type) {
       return this.moduleOptions.widgetIsContextual[type];
     },
+    widgetHasPlaceholder(type) {
+      return this.moduleOptions.widgetHasPlaceholder[type];
+    },
+    widgetHasInitialModal(type) {
+      return this.moduleOptions.widgetHasInitialModal[type];
+    },
     widgetEditorComponent(type) {
       return this.moduleOptions.components.widgetEditors[type];
     },
@@ -506,10 +560,46 @@ export default {
       } else {
         return this.renderings[widget._id];
       }
+    },
+    getValidItems() {
+      return this.items.filter(item => {
+        if (!window.apos.modules[`${item.type}-widget`]) {
+          console.warn(`The widget type ${item.type} exists in the content but is not configured.`);
+        }
+        return window.apos.modules[`${item.type}-widget`];
+      });
+    },
+    // Return a new widget object in which defaults are fully populated,
+    // especially valid sub-area objects, so that nested edits work on the page
+    newWidget(type) {
+      const widget = {
+        type
+      };
+      const schema = apos.modules[apos.area.widgetManagers[type]].schema;
+      schema.forEach(field => {
+        if (field.type === 'area') {
+          widget[field.name] = {
+            _id: cuid(),
+            metaType: 'area',
+            items: []
+          };
+        } else {
+          widget[field.name] = field.def ? klona(field.def) : field.def;
+        }
+      });
+      return widget;
+    },
+    destroyParentComponent() {
+      if (!document.body.contains(this.$parent.$el)) {
+        this.$parent.$destroy();
+      }
     }
   }
 };
 
+function cancelRefresh(refreshOptions) {
+  refreshOptions.refresh = false;
+}
 </script>
 
 <style lang="scss" scoped>

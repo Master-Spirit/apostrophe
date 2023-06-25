@@ -85,7 +85,7 @@ export default {
       id: this.value && this.value._id,
       original: null,
       docFields: {
-        data: { ...this.value },
+        data: {},
         hasErrors: false
       },
       modal: {
@@ -132,20 +132,47 @@ export default {
     }
   },
   async mounted() {
+    apos.area.widgetOptions = [
+      klona(this.options),
+      ...apos.area.widgetOptions
+    ];
     this.modal.active = true;
   },
+  destroyed() {
+    apos.area.widgetOptions = apos.area.widgetOptions.slice(1);
+  },
   created() {
-    this.original = this.value ? klona(this.value) : this.getDefault();
+    const defaults = this.getDefault();
+
+    if (this.value) {
+      this.original = klona(this.value);
+      this.docFields.data = {
+        ...defaults,
+        ...this.value
+      };
+      return;
+    }
+
+    this.original = klona(defaults);
+    this.docFields.data = defaults;
   },
   methods: {
     updateDocFields(value) {
       this.docFields = value;
     },
-    save() {
+    async save() {
       this.triggerValidation = true;
       this.$nextTick(async () => {
         if (this.docFields.hasErrors) {
           this.triggerValidation = false;
+          return;
+        }
+        try {
+          await this.postprocess();
+        } catch (e) {
+          await this.handleSaveError(e, {
+            fallback: 'An error occurred saving the widget.'
+          });
           return;
         }
         const widget = this.docFields.data;
@@ -162,7 +189,15 @@ export default {
     getDefault() {
       const widget = {};
       this.schema.forEach(field => {
-        widget[field.name] = field.def ? klona(field.def) : field.def;
+        if (field.name.startsWith('_')) {
+          return;
+        }
+        // Using `hasOwn` here, not simply checking if `field.def` is truthy
+        // so that `false`, `null`, `''` or `0` are taken into account:
+        const hasDefaultValue = Object.hasOwn(field, 'def');
+        widget[field.name] = hasDefaultValue
+          ? klona(field.def)
+          : null;
       });
       return widget;
     }

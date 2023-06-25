@@ -1,24 +1,705 @@
 # Changelog
 
-## UNRELEASED
+## 3.51.1 (2023-06-23)
+
+## Fixes
+
+* Fix a regression introduced in 3.51.0 - conditional fields work again in the array editor dialog box.
+
+## 3.51.0 (2023-06-21)
 
 ### Adds
 
+* Items can now be added to the user's personal menu in the
+admin bar, alongside the "Log Out" option. To do so, specify
+the `user: true` option when calling `self.apos.adminBar.add`.
+This should be reserved for items that manage personal settings.
+* When duplicating another document, the `_id` properties of
+array items, widgets and areas are still regenerated to ensure
+uniqueness across documents. However, an `_originalId` property
+is now available for reference while the document remains in memory.
+This facilitates change detection within array items in
+`beforeSave` handlers and the like.
+* Adds the possibility to add custom admin bars via the `addBar()` method from the `admin-bar` module.
+* Adds support for conditional fields within `array` and `object` field schema. See the [documentation](https://v3.docs.apostrophecms.org/guide/conditional-fields/) for more information.
+
+### Fixes
+
+* Uses `findForEditing` method in the page put route.
+* The "Duplicate" option in the page or piece manager now correctly duplicates the
+entire document. This was a regression introduced in 3.48.0. The "Duplicate" option
+in the editor dialog box always worked correctly.
+
+### Changes
+
+* Browser URL now changes to reflect the slug of the document according to the mode that is being viewed.
+
+## 3.50.0 (2023-06-09)
+
+### Adds
+
+* As a further fix for issues that could ensue before the improvements
+to locale renaming support that were released in 3.49.0, an
+`@apostrophecms/page:reattach` task has been added. This command line task
+takes the `_id` or `slug` of a page and reattaches it to the page tree as
+the last child of the home page, even if page tree data for that page
+is corrupted. You may wish to use the `--new-slug` and `--locale` options. This task should not
+be needed in normal circumstances.
+
+## 3.49.0 (2023-06-08)
+
+### Changes
+
+* Updates area UX to not display Add Content controls when a widget is focused.
+* Updates area UX to unfocus widget on esc key.
+* Updates widget UI to use dashed outlines instead of borders to indicate bounds.
+* Updates UI for Insert Menu.
+* Updates Insert Menu UX to allow mid-node insertion.
+* Rich Text Widget's Insert components are now expected to emit `done` and `cancel` for proper RT cleanup. `close` still supported for BC, acts as `done`.
+* Migrated the business logic of the login-related Vue components to external mixins, so that the templates and styles can be overridden by
+copying the component `.vue` file to project level without copying all of the business logic. If you have already copied the components to style them,
+we encourage you to consider replacing your `script` tag with the new version, which just imports the mixin, so that fixes we make there will be
+available in your project.
+
+### Adds
+
+* Adds keyboard accessibility to Insert menu.
+* Adds regex pattern feature for string fields.
+* Adds `pnpm` support. Introduces new optional Apostrophe root configuration `pnpm` to force opt-in/out when auto detection fails. See the [documentation](https://v3.docs.apostrophecms.org/guide/using-pnpm.html) for more details.
+* Adds a warning if database queries involving relationships
+are made before the last `apostrophe:modulesRegistered` handler has fired.
+If you need to call Apostrophe's `find()` methods at startup,
+it is best to wait for the `@apostrophecms/doc:beforeReplicate` event.
+* Allow `@` when a piece is a template and `/@` for page templates (doc-template-library module).
+* Adds a `prefix` option to the http frontend util module.  
+If explicitly set to `false`, prevents the prefix from being automatically added to the URL,  
+when making calls with already-prefixed URLs for instance.
+* Adds the `redirectToFirstLocale` option to the `i18n` module to prevent users from reaching a version of their site that would not match any locale when requesting the site without a locale prefix in the URL.
+* If just one instance of a piece type should always exist (per locale if localized), the
+`singletonAuto` option may now be set to `true` or to an object with a `slug` option in
+order to guarantee it. This implicitly sets `singleton: true` as well. This is now used
+internally by `@apostrophecms/global` as well as the optional `@apostrophecms-pro/palette` module.
+
+### Fixes
+
+* Fix 404 error when viewing/editing a doc which draft has a different version of the slug than the published one.
+* Fixed a bug where multiple home pages can potentially be inserted into the database if the
+default locale is renamed. Introduced the `async apos.doc.bestAposDocId(criteria)` method to
+help identify the right `aposDocId` when inserting a document that might exist in
+other locales.
+* Fixed a bug where singletons like the global doc might not be inserted at all if they
+exist under the former name of the default locale and there are no other locales.
+
+## 3.48.0 (2023-05-26)
+
+### Adds
+
+* For performance, add `apos.modules['piece-type']getManagerApiProjection` method to reduce the amount of data returned in the manager
+    modal. The projection will contain the fields returned in the method in addition to the existing manager modal
+    columns.
+* Add `apos.schema.getRelationshipQueryBuilderChoicesProjection` method to set the projection used in
+    `apos.schema.relationshipQueryBuilderChoices`.
+* Rich-text inline images now copies the `alt` attribute from the original image from the Media Library.
+
+### Changes
+
+* Remove `stripPlaceholderBrs` and `restorePlaceholderBrs` from `AposRichTextWidgetEditor.vue` component.
+* Change tiptap `Gapcursor` display to use a vertical blinking cursor instead of an horizontal cursor, which allow users to add text before and after inline images and tables.
+* You can set `max-width` on `.apos-rich-text-toolbar__inner` to define the width of the rich-text toolbar. It will now
+    flow on multiple lines if needed.
+* The `utilityRail` prop of `AposSchema` now defaults to `false`, removing
+the need to explicitly pass it in almost all contexts.
+* Mark `apos.modules['doc-type']` methods `getAutocompleteTitle`, `getAutocompleteProjection` and `autocomplete` as
+    deprecated. Our admin UI does not use them, it uses the `autocomplete('...')` query builder.
+    More info at https://v3.docs.apostrophecms.org/reference/query-builders.html#autocomplete'.
+* Print a warning with a clear explanation if a module's `index.js` file contains
+no `module.exports` object (often due to a typo), or it is empty.
+
+### Fixes
+
+* Now errors and exits when a piece-type or widget-type module has a field object with the property `type`. Thanks to [NuktukDev](https://github.com/nuktukdev) for this contribution.
+* Add a default page type value to prevent the dropdown from containing an empty value.
+
+## 3.47.0 (2023-05-05)
+
+### Changes
+
+* Since Node 14 and MongoDB 4.2 have reached their own end-of-support dates,
+we are **no longer supporting them for A3.** Note that our dependency on
+`jsdom` 22 is incompatible with Node 14. Node 16 and Node 18 are both
+still supported. However, because Node 16 reaches its
+end-of-life date quite soon (September), testing and upgrading directly
+to Node 18 is strongly recommended.
+* Updated `sluggo` to version 1.0.0.
+* Updated `jsdom` to version `22.0.0` to address an installation warning about the `word-wrap` module.
+
+### Fixes
+
+* Fix `extendQueries` to use super pattern for every function in builders and methods (and override properties that are not functions).
+
+## 3.46.0 (2023-05-03)
+
+### Fixes
+
+* Adding or editing a piece no longer immediately refreshes the main content area if a widget editor is open. This prevents interruption of the widget editing process
+when working with the `@apostrophecms/ai-helper` module, and also helps in other situations.
+* Check that `e.doc` exists when handling `content-changed` event.
+* Require updated `uploadfs` version with no dependency warnings.
+
+### Adds
+
+* Allow sub-schema fields (array and object) to follow parent schema fields using the newly introduced `following: '<parentField'` syntax, where the starting `<` indicates the parent level. For example `<parentField` follows a field in the parent level, `<<grandParentField` follows a field in the grandparent level, etc. The change is fully backward compatible with the current syntax for following fields from the same schema level.
+
+### Changes
+
+* Debounce search to prevent calling search on every key stroke in the manager modal.
+* Various size and spacing adjustments in the expanded Add Content modal UI
+
+## 3.45.1 (2023-04-28)
+
+### Fixes
+
+* Added missing styles to ensure consistent presentation of the rich text insert menu.
+* Fixed a bug in which clicking on an image in the media manager would close the "insert
+image" dialog box.
+* Update `html-to-text` package to the latest major version.
+
+## 3.45.0 (2023-04-27)
+
+### Adds
+
+* Rich text widgets now support the `insert` option, an array
+which currently may contain the strings `image` and `table` in order to add a
+convenient "insert menu" that pops up when the slash key is pressed.
+This provides a better user experience for rich text features that shouldn't
+require that the user select existing text before using them.
+* Auto expand inline array width if needed using `width: max-content` in the admin UI.
+* The "browse" button is now available when selecting pages and pieces
+to link to in the rich text editor.
+* The "browse" button is also available when selecting inline images
+in the rich text editor.
+* Images are now previewed in the relationship field's compact list view.
+* The new `apos-refreshing` Apostrophe bus event can be used to prevent
+Apostrophe from refreshing the main content zone of the page when images
+and pieces are edited, by clearing the `refresh` property of the object
+passed to the event.
+* To facilitate custom click handlers, an `apos.modal.onTopOf(el1, el2)` function is now
+available to check whether an element is considered to be "on top of" another element in
+the modal stack.
+
+### Changes
+
+* The `v-click-outside-element` Vue directive now understands that modals "on top of"
+an element should be considered to be "inside" the element, e.g. clicks on them
+shouldn't close the link dialog etc.
+
+### Fixes
+
+* Fix various issues on conditional fields that were occurring when adding new widgets with default values or selecting a falsy value in a field that has a conditional field relying on it.
+Populate new or existing doc instances with default values and add an empty `null` choice to select fields that do not have a default value (required or not) and to the ones configured with dynamic choices.
+* Rich text widgets save more reliably when many actions are taken quickly just before save.
+* Fix an issue in the `oembed` field where the value was kept in memory after cancelling the widget editor, which resulted in saving the value if the widget was nested and the parent widget was saved.
+Also improve the `oembed` field UX by setting the input as `readonly` rather than `disabled` when fetching the video metadata, in order to avoid losing its focus when typing.
+
+## 3.44.0 (2023-04-13)
+
+### Adds
+
+* `checkboxes` fields now support a new `style: 'combobox'` option for a better multiple-select experience when there
+are many choices.
+* If the new `guestApiAccess` option is set to `true` for a piece type or for `@apostrophecms/page`,
+Apostrophe will allow all logged-in users to access the GET-method REST APIs of that
+module, not just users with editing privileges, even if `publicApiProjection` is not set.
+This is useful when the goal is to allow REST API access to "guest" users who have
+project-specific reasons to fetch access content via REST APIs.
+* `test-lib/utils.js` has new `createUser` and `loginAs` methods for the convenience of
+those writing mocha tests of Apostrophe modules.
+* `batchOperations` permissions: if a `permission` property is added to any entry in the `batchOperations` cascade of a piece-type module, this permission will be checked for every user. See `batchOperations` configuration in `modules/@apostrophecms/piece-type/index.js`. The check function `checkBatchOperationsPermissions` can be extended. Please note that this permission is checked only to determine whether to offer the operation.
+
+### Fixes
+* Fix child page slug when title is deleted
+
+## 3.43.0 (2023-03-29)
+
+### Adds
+
+* Add the possibility to override the default "Add Item" button label by setting the `itemLabel` option of an `array` field.
+* Adds `touch` task for every piece type. This task invokes `update` on each piece, which will execute all of the same event handlers that normally execute when a piece of that type is updated. Example usage: `node app article:touch`.
+
+### Fixes
+
+* Hide the suggestion help from the relationship input list when the user starts typing a search term.
+* Hide the suggestion hint from the relationship input list when the user starts typing a search term except when there are no matches to display.
+* Disable context menu for related items when their `relationship` field has no sub-[`fields`](https://v3.docs.apostrophecms.org/guide/relationships.html#providing-context-with-fields) configured.
+
+## 3.42.0 (2023-03-16)
+
+### Adds
+
+* You can now set `style: table` on inline arrays. It will display the array as a regular HTML table instead of an accordion.
+See the [array field documentation](https://v3.docs.apostrophecms.org/reference/field-types/array.html#settings) for more information.
+* You can now set `draggable: false` on inline arrays. It will disable the drag and drop feature. Useful when the order is not significant.
+See the [array field documentation](https://v3.docs.apostrophecms.org/reference/field-types/array.html#settings) for more information.
+* You can now set the label and icon to display on inline arrays when they are empty.
+See the [array field documentation](https://v3.docs.apostrophecms.org/reference/field-types/array.html#whenEmpty) for more information.
+* We have added a new and improved suggestion UI to relationship fields.
+* The `utilityOperations` feature of piece types now supports additional properties:
+`relationship: true` (show the operation only when editing a relationship), `relationship: false` (never show
+the operation when editing a relationship), `button: true`, `icon` and `iconOnly: true`.
+When `button: true` is specified, the operation appears as a standalone button rather than
+being tucked away in the "more" menu.
+* In addition, `utilityOperations` can now specify `eventOptions` with an `event` subproperty
+instead of `modalOptions`. This is useful with the new `edit` event (see below).
+* Those extending our admin UI on the front end can now open a modal to create or edit a page or piece by calling
+`await apos.doc.edit({ type: 'article' })` (the type here is an example). To edit an existing document add an
+`_id` property. To copy an existing document (like our "duplicate" feature) add a `copyOf`
+property. When creating new pages, `type` can be sent to `@apostrophecms/page` for convenience
+(note that the `type` property does not override the default or current page type in the editor).
+* The `edit` Apostrophe event is now available and takes an object with the same properties
+as above. This is useful when configuring `utilityOperations`.
+* The `content-changed` Apostrophe event can now be emitted with a `select: true` property. If a
+document manager for the relevant content type is open, it will attempt to add the document to the
+current selection. Currently this works best with newly inserted documents.
+* Localized strings in the admin UI can now use `$t(key)` to localize a string inside
+an interpolated variable. This was accomplished by setting `skipOnVariables` to false
+for i18next, solely on the front end for admin UI purposes.
+* The syntax of the method defined for dynamic `choices` now accepts a module prefix to get the method from, and the `()` suffix.
+This has been done for consistency with the external conditions syntax shipped in the previous release. See the documentation for more information.
+* Added the `viewPermission` property of schema fields, and renamed `permission` to `editPermission` (with backwards
+compatibility) for clarity. You can now decide if a schema field requires permissions to be visible or editable.
+See the documentation for more information.
+* Display the right environment label on login page. By default, based on `NODE_ENV`, overriden by `environmentLabel` option in `@apostrophecms/login` module. The environment variable `APOS_ENV_LABEL` will override this. Note that `NODE_ENV` should generally only be set to `development` (the default) or `production` as many Node.js modules opt into optimizations suitable for all deployed environments when it is set to `production`. This is why we offer the separate `APOS_ENV_LABEL` variable.
+
+### Fixes
+
+* Do not log unnecessary "required" errors for hidden fields.
+* Fixed a bug that prevented "Text Align" from working properly in the rich text editor in certain cases.
+* Fix typo in `@apostrophecms/doc-type` and `@apostrophecms/submitted-drafts` where we were using `canCreate` instead of `showCreate` to display the `Create New` button or showing the `Copy` button in `Manager` modals.
+* Send external condition results in an object so that numbers are supported as returned values.
+
+## 3.41.1 (2023-03-07)
+
+No changes. Publishing to make sure 3.x is tagged `latest` in npm, rather than 2.x.
+
+## 3.41.0 (2023-03-06)
+
+### Adds
+
+* Handle external conditions to display fields according to the result of a module method, or multiple methods from different modules.
+This can be useful for displaying fields according to the result of an external API or any business logic run on the server. See the documentation for more information.
+
+### Fixes
+
+* Replace `deep-get-set` dependency with `lodash`'s `get` and `set` functions to fix the [Prototype Pollution in deep-get-set](https://github.com/advisories/GHSA-mjjj-6p43-vhhv) vulnerability. There was no actual vulnerability in Apostrophe due to the way the module was actually used, and this was done to address vulnerability scan reports.
+* The "soft redirects" for former URLs of documents now work better with localization. Thanks to [Waldemar Pankratz](https://github.com/waldemar-p).
+* Destroy `AreaEditor` Vue apps when the page content is refreshed in edit mode. This avoids a leak of Vue apps components being recreated while instances of old ones are still alive.
+
+### Security
+
+* Upgrades passport to the latest version in order to ensure session regeneration when logging in or out. This adds additional security to logins by mitigating any risks due to XSS attacks. Apostrophe is already robust against XSS attacks. For passport methods that are internally used by Apostrophe everything is still working. For projects that are accessing the passport instance directly through `self.apos.login.passport`, some verifications may be necessary to avoid any compatibility issue. The internally used methods are `authenticate`, `use`, `serializeUser`, `deserializeUser`, `initialize`, `session`.
+
+## 3.40.1 (2023-02-18)
+
+* No code change. Patch level bump for package update.
+
+## 3.40.0 (2023-02-17)
+
+### Adds
+
+* For devops purposes, the `APOS_BASE_URL` environment variable is now respected as an override of the `baseUrl` option.
+
+### Fixes
+
+* Do not display shortcut conflicts at startup if there are none.
+* Range field correctly handles the `def` attribute set to `0` now. The `def` property will be used when the field has no value provided; a value going over the max or below the min threshold still returns `null`.
+* `select` fields now work properly when the `value` of a choice is a boolean rather than a string or a number.
+
+## 3.39.2 (2023-02-03)
+
+### Fixes
+* Hotfix for a backwards compatibility break in webpack that triggered a tiptap bug. The admin UI build will now succeed as expected.
+
+## 3.39.1 (2023-02-02)
+
+### Fixes
+
+* Rescaling cropped images with the `@apostrophecms/attachment:rescale` task now works correctly. Thanks to [Waldemar Pankratz](https://github.com/waldemar-p) for this contribution.
+
+## 3.39.0 (2023-02-01)
+
+### Adds
+
+* Basic support for editing tables by adding `table` to the rich text toolbar. Enabling `table` allows you to create tables, including `td` and `th` tags, with the ability to merge and split cells. For now the table editing UI is basic, all of the functionality is there but we plan to add more conveniences for easy table editing soon. See the "Table" dropdown for actions that are permitted based on the current selection.
+* `superscript` and `subscript` may now be added to the rich text widget's `toolbar` option.
+* Early beta-quality support for adding inline images to rich text, by adding `image` to the rich text toolbar. This feature works reliably, however the UI is not mature yet. In particular you must search for images by typing part of the title. We will support a proper "browse" experience here soon. For good results you should also configure the `imageStyles` option. You will also want to style the `figure` tags produced. See the documentation for more information.
+* Support for `div` tags in the rich text toolbar, if you choose to include them in `styles`. This is often necessary for A2 content migration and can potentially be useful in new work when combined with a `class` if there is no suitable semantic block tag.
+* The new `@apostrophecms/attachment:download-all --to=folder` command line task is useful to download all of your attachments from an uploadfs backend other than local storage, especially if you do not have a more powerful "sync" utility for that particular storage backend.
+* A new `loadingType` option can now be set for `image-widget` when configuring an `area` field. This sets the `loading` attribute of the `img` tag, which can be used to enable lazy loading in most browsers. Thanks to [Waldemar Pankratz](https://github.com/waldemar-p) for this contribution.
+* Two new module-level options have been added to the `image-widget` module: `loadingType` and `size`. These act as fallbacks for the same options at the area level. Thanks to [Waldemar Pankratz](https://github.com/waldemar-p) for this contribution.
+
+### Fixes
+
+* Adding missing require (`bluebird`) and fallback (`file.crops || []`) to `@apostrophecms/attachment:rescale`-task
+
+## 3.38.1 (2023-01-23)
+
+### Fixes
+
+* Version 3.38.0 introduced a regression that temporarily broke support for user-edited content in locales with names like `de-de` (note the lowercase country name). This was inadvertently introduced in an effort to improve support for locale fallback when generating static translations of the admin interface. Version 3.38.1 brings back the content that temporarily appeared to be missing for these locales (it was never removed from the database), and also achieves the original goal. **However, if you created content for such locales using `3.38.0` (released five days ago) and wish to keep that content,** rather than reverting to the content from before `3.38.0`, see below.
+
+### Adds
+
+* The new `i18n:rename-locale` task can be used to move all content from one locale name to another, using the `--old` and `--new` options. By default, any duplicate keys for content existing in both locales will stop the process. However you can specify which content to keep in the event of a duplicate key error using the `--keep=localename` option. Note that the value of `--new` should match the a locale name that is currently configured for the `@apostrophecms/i18n` module.
+
+Example:
+
+```
+# If you always had de-de configured as a locale, but created
+# a lot of content with Apostrophe 3.38.0 which incorrectly stored
+# it under de-DE, you can copy that content. In this case we opt
+# to keep de-de content in the event of any conflicts
+node app @apostrophecms/i18n:rename-locale --old=de-DE --new=de-de --keep=de-de
+```
+
+## 3.38.0 (2023-01-18)
+
+### Adds
+
+* Emit a `beforeSave` event from the `@apostrophecms:notification` module, with `req` and the `notification` as arguments, in order to give the possibility to override the notification.
+* Emit a `beforeInsert` event from the `@apostrophecms:attachment` module, with `req` and the `doc` as arguments, in order to give the possibility to override the attachment.
+* Emit a `beforeSaveSafe` event from the `@apostrophecms:user` module, with `req`, `safeUser` and `user` as arguments, in order to give the possibility to override properties of the `safeUser` object which contains password hashes and other information too sensitive to be stored in the aposDocs collection.
+* Automatically convert failed uppercase URLs to their lowercase version - can be disabled with `redirectFailedUpperCaseUrls: false` in `@apostrophecms/page/index.js` options. This only comes into play if a 404 is about to happen.
+* Automatically convert country codes in locales like `xx-yy` to `xx-YY` before passing them to `i18next`, which is strict about uppercase country codes.
+* Keyboard shortcuts conflicts are detected and logged on to the terminal.
+
+### Fixes
+
+* Invalid locales passed to the i18n locale switching middleware are politely mapped to 400 errors.
+* Any other exceptions thrown in the i18n locale switching middleware can no longer crash the process.
+* Documents kept as the `previous` version for undo purposes were not properly marked as such, breaking the public language switcher in some cases. This was fixed and a migration was added for existing data.
+* Uploading an image in an apostrophe area with `minSize` requirements will not trigger an unexpected error anymore. If the image is too small, a notification will be displayed with the minimum size requirements. The `Edit Image` modal will now display the minimum size requirements, if any, above the `Browse Images` field.
+* Some browsers saw the empty `POST` response for new notifications as invalid XML. It will now return an empty JSON object with the `Content-Type` set to `application/json`.
+
+## 3.37.0 (2023-01-06)
+
+### Adds
+
+* Dynamic choice functions in schemas now also receive a data object with their original doc id for further inspection by your function.
+* Use `mergeWithCustomize` when merging extended source Webpack configuration. Introduce overideable asset module methods `srcCustomizeArray` and `srcCustomizeObject`, with reasonable default behavior, for fine tuning Webpack config arrays and objects merging. More info - [the Webpack mergeWithCustomize docs](https://github.com/survivejs/webpack-merge#mergewithcustomize-customizearray-customizeobject-configuration--configuration)
+* The image widget now accepts a `placeholderImage` option that works like `previewImage` (just specify a file extension, like `placeholderImage: 'jpg'`, and provide the file `public/placeholder.jpg` in the module). The `placeholderUrl` option is still available for backwards compatibility.
+
+### Fixes
+
+* `docId` is now properly passed through array and object fields and into their child schemas.
+* Remove module `@apostrophecms/polymorphic-type` name alias `@apostrophecms/polymorphic`. It was causing warnings
+    e.g. `A permission.can() call was made with a type that has no manager: @apostrophecms/polymorphic-type`.
+* The module `webpack.extensions` configuration is not applied to the core Admin UI build anymore. This is the correct and intended behavior as explained in the [relevant documentation](https://v3.docs.apostrophecms.org/guide/webpack.html#extending-webpack-configuration).
+* The `previewImage` option now works properly for widget modules loaded from npm and those that subclass them. Specifically, the preview image may be provided in the `public/` subdirectory of the original module, the project-level configuration of it, or a subclass.
+
+## 3.36.0 (2022-12-22)
+
+### Adds
+
+* `shortcut` option for piece modules, allowing easy re-mapping of the manager command shortcut per module.
+
+### Fixes
+
+* Ensure there are no conflicting command shortcuts for the core modules.
+
+## 3.35.0 (2022-12-21)
+
+### Adds
+
+* Introduced support for linking directly to other Apostrophe documents in a rich text widget. The user can choose to link to a URL, or to a page. Linking to various piece types can also be enabled with the `linkWithType` option. This is equivalent to the old `apostrophe-rich-text-permalinks` module but is included in the core in A3. See the [documentation](https://v3.docs.apostrophecms.org/guide/core-widgets.html#rich-text-widget) for details.
+* Introduced support for the `anchor` toolbar control in the rich text editor. This allows named anchors to be inserted. These are rendered as `span` tags with the given `id` and can then be linked to via `#id`, providing basic support for internal links. HTML 4-style named anchors in legacy content (`name` on `a` tags) are automatically migrated upon first edit.
+* German translation i18n file created for the Apostrophe Admin-UI. Thanks to [Noah Gysin](https://github.com/NoahGysin) for this contribution.
+* Introduced support for keyboard shortcuts in admin UI. Hitting `?` will display the list of available shortcuts. Developpers can define their own shortcuts by using the new `@apostrophecms/command-menu` module and the `commands` property. Please check the [keyboard shortcut documentation](https://v3.docs.apostrophecms.org/guide/command-menu.html) for more details.
+
+### Fixes
+
+* The `bulletList` and `orderedList` TipTap toolbar items now work as expected.
+* When using the autocomplete/typeahead feature of relationship fields, typing a space at the start no longer results in an error.
+* Replace [`credential`](https://www.npmjs.com/package/credential) package with [`credentials`](https://www.npmjs.com/package/credentials) to fix the [`mout` Prototype Pollution vulnerability](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-7792). There was no actual vulnerability in Apostrophe or credential due to the way the module was actually used, and this was done to address vulnerability scan reports.
+* Added a basic implementation of the missing "Paste from Clipboard" option to Expanded Widget Previews.
+
+
+## 3.34.0 (2022-12-12)
+
+### Fixes
+
+* Nested areas work properly in widgets that have the `initialModal: false` property.
+* Apostrophe's search index now properly incorporates most string field types as in A2.
+
+### Adds
+
+* Relationships load more quickly.
+* Parked page checks at startup are faster.
+* Tasks to localize and unlocalize piece type content (see `node app help [yourModuleName]:localize` and `node app help [yourModuleName]:unlocalize`).
+## 3.33.0 (2022-11-28)
+
+### Adds
+
+* You can now set `inline: true` on schema fields of type `array`. This displays a simple editing interface in the context of the main dialog box for the document in question, avoiding the need to open an additional dialog box. Usually best for cases with just one field or just a few. If your array field has a large number of subfields the default behavior (`inline: false`) is more suitable for your needs. See the [array field](https://v3.docs.apostrophecms.org/reference/field-types/array.html) documentation for more information.
+* Batch feature for publishing pieces.
+* Add extensibility for `rich-text-widget` `defaultOptions`. Every key will now be used in the `AposRichTextWidgetEditor`.
+
+### Fixes
+
+* Prior to this release, widget templates that contained areas pulled in from related documents would break the ability to add another widget beneath.
+* Validation of object fields now works properly on the browser side, in addition to server-side validation, resolving UX issues.
+* Provisions were added to prevent any possibility of a discrepancy in relationship loading results under high load. It is not clear whether this A2 bug was actually possible in A3.
+
+## 3.32.0 (2022-11-09)
+
+### Adds
+
+* Adds Reset Password feature to the login page. Note that the feature must be enabled and email delivery must be properly configured. See the [documentation](https://v3.docs.apostrophecms.org/reference/modules/login.html) for more details.
+* Allow project-level developer to override bundling decisions by configuring the `@apostrophecms/asset` module. Check the [module documentation](https://v3.docs.apostrophecms.org/reference/modules/asset.html#options) for more information.
+
+### Fixes
+
+* Query builders for regular select fields have always accepted null to mean "do not filter on this property." Now this also works for dynamic select fields.
+* The i18n UI state management now doesn't allow actions while it's busy.
+* Fixed various localization bugs in the text of the "Update" dropdown menu.
+* The `singleton: true` option for piece types now automatically implies `showCreate: false`.
+* Remove browser console warnings by handling Tiptap Editor's breaking changes and duplicated plugins.
+* The editor modal now allocates more space to area fields when possible, resolving common concerns about editing large widgets inside the modal.
+
+## 3.31.0 (2022-10-27)
+
+### Adds
+
+* Adds `placeholder: true` and `initialModal: false` features to improve the user experience of adding widgets to the page. Checkout the [Widget Placeholders documentation](https://v3.docs.apostrophecms.org/guide/areas-and-widgets.html#adding-placeholder-content-to-widgets) for more detail.
+
+### Fixes
+
+* When another user is editing the document, the other user's name is now displayed correctly.
+
+## 3.30.0 (2022-10-12)
+
+### Adds
+
+* New `APOS_LOG_ALL_ROUTES` environment variable. If set, Apostrophe logs information about all middleware functions and routes that are executed on behalf of a particular URL.
+* Adds the `addFileGroups` option to the `attachment` module. Additionally it exposes a new method, `addFileGroup(group)`. These allow easier addition of new file groups or extension of the existing groups.
+
+### Fixes
+
+* Vue 3 may now be used in a separate webpack build at project level without causing problems for the admin UI Vue 2 build.
+* Fixes `cache` module `clear-cache` CLI task message
+* Fixes help message for `express` module `list-routes` CLI task
+
+## 3.29.1 (2022-10-03)
+
+### Fixes
+
+* Hotfix to restore Node 14 support. Of course Node 16 is also supported.
+
+
+## 3.29.0 (2022-10-03)
+
+### Adds
+
+* Areas now support an `expanded: true` option to display previews for widgets. The Expanded Widget Preview Menu also supports grouping and display columns for each group.
+* Add "showQuery" in piece-page-type in order to override the query for the "show" page as "indexQuery" does it for the index page
+
+### Fixes
+
+* Resolved a bug in which users making a password error in the presence of pre-login checks such as a CAPTCHA were unable to try again until they refreshed the page.
+
+## 3.28.1 (2022-09-15)
+
+### Fixes
+
+* `AposInputBoolean` can now be `required` and have the value `false`.
+* Schema fields containing boolean filters can now list both `yes` and `no` choices according to available values in the database.
+* Fix attachment `getHeight()` and `getWidth()` template helpers by changing the assignment of the `attachment._crop` property.
+* Change assignment of `attachment._focalPoint` for consistency.
+
+## 3.28.0 (2022-08-31)
+
+### Fixes
+
+* Fix UI bug when creating a document via a relationship.
+
+### Adds
+
+* Support for uploading `webp` files for display as images. This is supported by all current browsers now that Microsoft has removed IE11. For best results, you should run `npm update` on your project to make sure you are receiving the latest release of `uploadfs` which uses `sharp` for image processing. Thanks to [Isaac Preston](https://github.com/ixc7) for this addition.
+* Clicking outside a modal now closes it, the same way the `Escape` key does when pressed.
+* `checkboxes` fields now support `min` and `max` properties. Thanks to [Gabe Flores](https://github.com/gabeflores-appstem).
+
+## 3.27.0 (2022-08-18)
+
+### Adds
+
+* Add `/grid` `POST` route in permission module, in addition to the existing `GET` one.
+* New utility script to help find excessively heavy npm dependencies of apostrophe core.
+
+### Changes
+
+* Extract permission grid into `AposPermissionGrid` vue component.
+* Moved `stylelint` from `dependencies` to `devDependencies`. The benefit may be small because many projects will depend on `stylelint` at project level, but every little bit helps install speed, and it may make a bigger difference if different major versions are in use.
+
+## 3.26.1 (2022-08-06)
+
+### Fixes
+
+Hotfix: always waits for the DOM to be ready before initializing the Apostrophe Admin UI. `setTimeout` alone might not guarantee that every time. This issue has apparently become more frequent in the latest versions of Chrome.
+* Modifies the `login` module to return an empty object in the API session cookie response body to avoid potential invalid JSON error if `response.json()` is retrieved.
+
+## 3.26.0 (2022-08-03)
+
+### Adds
+
+* Tasks can now be registered with the `afterModuleReady` flag, which is more useful than `afterModuleInit` because it waits for the module to be more fully initialized, including all "improvements" loaded via npm. The original `afterModuleInit` flag is still supported in case someone was counting on its behavior.
+* Add `/grid` `POST` route in permission module, in addition to the existing `GET` one, to improve extensibility.
+* `@apostrophecms/express:list-routes` command line task added, to facilitate debugging.
+
+### Changes
+
+* Since Microsoft has ended support for IE11 and support for ES5 builds is responsible for a significant chunk of Apostrophe's installation time, the `es5: true` option no longer produces an IE11 build. For backwards compatibility, developers will receive a warning, but their build will proceed without IE11 support. IE11 ES5 builds can be brought back by installing the optional [@apostrophecms/asset-es5](https://github.com/apostrophecms/asset-es5) module.
+
+### Fixes
+
+* `testModule: true` works in unit tests of external Apostrophe modules again even with modern versions of `mocha`, thanks to [Amin Shazrin](https://github.com/ammein).
+* `getObjectManager` is now implemented for `Object` field types, fixing a bug that prevented the use of areas found in `object` schema fields within templates. Thanks to [James R T](https://github.com/jamestiotio).
+
+## 3.25.0 (2022-07-20)
+
+### Adds
+
+* `radio` and `checkboxes` input field types now support a server side `choices` function for supplying their `choices` array dynamically, just like `select` fields do. Future custom field types can opt into this functionality with the field type flag `dynamicChoices: true`.
+
+### Fixes
+
+* `AposSelect` now emits values on `change` event as they were originally given. Their values "just work" so you do not have to think about JSON anymore when you receive it.
+* Unpinned tiptap as the tiptap team has made releases that resolve the packaging errors that caused us to pin it in 3.22.1.
+* Pinned `vue-loader` to the `15.9.x` minor release series for now. The `15.10.0` release breaks support for using `npm link` to develop the `apostrophe` module itself.
+* Minimum version of `sanitize-html` bumped to ensure a potential denial-of-service vector is closed.
+
+## 3.24.0 (2022-07-06)
+
+### Adds
+
+* Handle `private: true` locale option in i18n module, preventing logged out users from accessing the content of a private locale.
+
+### Fixes
+
+* Fix missing title translation in the "Array Editor" component.
+* Add `follow: true` flag to `glob` functions (with `**` pattern) to allow registering symlink files and folders for nested modules
+* Fix disabled context menu for relationship fields editing ([#3820](https://github.com/apostrophecms/apostrophe/issues/3820))
+* In getReq method form the task module, extract the right `role` property from the options object.
+* Fix `def:` option in `array` fields, in order to be able to see the default items in the array editor modal
+
+## 3.23.0 (2022-06-22)
+
+### Adds
+
+* Shared Drafts: gives the possibility to share a link which can be used to preview the draft version of page, or a piece `show` page.
+* Add `Localize` option to `@apostrophecms/image`. In Edit mode the context bar menu includes a "Localize" option to start cloning this image into other locales.
+
+### Fixes
+
+* Update `sass` to [`1.52.3`+](https://github.com/sass/dart-sass/pull/1713) to prevent the error `RangeError: Invalid value: Not in inclusive range 0..145: -1`. You can now fix that by upgrading with `npm update`. If it does not immediately clear up the issue in development, try `node app @apostrophecms/asset:clear-cache`.
+* Fix a potential issue when URLs have a query string, in the `'@apostrophecms/page:notFound'` handler of the `soft-redirect` module.
+
+## 3.22.1 (2022-06-17)
+
+* Hotfix: temporarily pin versions of tiptap modules to work around packaging error that breaks import of the most recent releases. We will unpin as soon as this is fixed upstream. Fixes a bug where `npm update` would fail for A3 projects.
+
+## 3.22.0 (2022-06-08)
+
+### Adds
+
+* Possibility to pass options to webpack extensions from any module.
+
+### Fixes
+
+* Fix a Webpack cache issue leading to modules symlinked in `node_modules` not being rebuilt.
+* Fixes login maximum attempts error message that wasn't showing the plural when lockoutMinutes is more than 1.
+* Fixes the text color of the current array item's slat label in the array editor modal.
+* Fixes the maximum width of an array item's slat label so as to not obscure the Remove button in narrow viewports.
+* If an array field's titleField option is set to a select field, use the selected option's label as the slat label rather its value.
+* Disable the slat controls of the attachment component while uploading.
+* Fixes bug when re-attaching the same file won't trigger an upload.
+* AposSlat now fully respects the disabled state.
+
+## 3.21.1 (2022-06-04)
+
+### Fixes
+
+* Work around backwards compatibility break in `sass` module by pinning to `sass` `1.50.x` while we investigate. If you saw the error `RangeError: Invalid value: Not in inclusive range 0..145: -1` you can now fix that by upgrading with `npm update`. If it does not immediately clear up the issue in development, try `node app @apostrophecms/asset:clear-cache`.
+
+## 3.21.0 (2022-05-25)
+
+### Adds
+
+* Trigger only the relevant build when in a watch mode (development). The build paths should not contain comma (`,`).
+* Adds an `unpublish` method, available for any doc-type.
+An _Unpublish_ option has also been added to the context menu of the modal when editing a piece or a page.
+* Allows developers to group fields in relationships the same way it's done for normal schemas.
+
+### Fixes
+
+* Vue files not being parsed when running eslint through command line, fixes all lint errors in vue files.
+* Fix a bug where some Apostrophe modules symlinked in `node_modules` are not being watched.
+* Recover after webpack build error in watch mode (development only).
+* Fixes an edge case when failing (throw) task invoked via `task.invoke` will result in `apos.isTask()` to always return true due to `apos.argv` not reverted properly.
+
+## 3.20.1 (2022-05-17)
+
+### Fixes
+
+* Minor corrections to French translation.
+
+## 3.20.0
+
+### Adds
+
+* Adds French translation of the admin UI (use the `fr` locale).
+
+## 3.19.0
+
+### Adds
+
+* New schema field type `dateAndTime` added. This schema field type saves in ISO8601 format, as UTC (Universal Coordinated Time), but is edited in a user-friendly way in the user's current time zone and locale.
+* Webpack disk cache for better build performance in development and, if appropriately configured, production as well.
+* In development, Webpack rebuilds the front end without the need to restart the Node.js process, yielding an additional speedup. To get this speedup for existing projects, see the `nodemonConfig` section of the latest `package.json` in [a3-boilerplate](https://github.com/apostrophecms/a3-boilerplate) for the new "ignore" rules you'll need to prevent nodemon from stopping the process and restarting.
+* Added the new command line task `apostrophecms/asset:clear-cache` for clearing the webpack disk cache. This should be necessary only in rare cases where the configuration has changed in ways Apostrophe can't automatically detect.
+* A separate `publishedLabel` field can be set for any schema field of a page or piece. If present it is displayed instead of `label` if the document has already been published.
+
+### 3.18.1
+
+### Fixes
+
+* The admin UI now rebuilds properly in a development environment when new npm modules are installed in a multisite project (`apos.rootDir` differs from `apos.npmRootDir`).
+
+## 3.18.0 (2022-05-03)
+
+### Adds
+
+* Images may now be cropped to suit a particular placement after selecting them. SVG files may not be cropped as it is not possible in the general case.
+* Editors may also select a "focal point" for the image after selecting it. This ensures that this particular point remains visible even if CSS would otherwise crop it, which is a common issue in responsive design. See the `@apostrophecms/image` widget for a sample implementation of the necessary styles.
+* Adds the `aspectRatio` option for image widgets. When set to `[ w, h ]` (a ratio of width to height), images are automatically cropped to this aspect ratio when chosen for that particular widget. If the user does not crop manually, then cropping happens automatically.
+* Adds the `minSize` option for image widgets. This ensures that the images chosen are at least the given size `[ width, height ]`, and also ensures the user cannot choose something smaller than that when cropping.
+* Implements OpenTelemetry instrumentation.
+* Developers may now specify an alternate Vue component to be used for editing the subfields of relationships, either at the field level or as a default for all relationships with a particular piece type.
 * The widget type base module now always passes on the `components` option as browser data, so that individual widget type modules that support contextual editing can be implemented more conveniently.
 * In-context widget editor components now receive a `focused` prop which is helpful in deciding when to display additional UI.
-* Implements OpenTelemetry instrumentation.
-* Adds new event `apostrophe:beforeExit` and improves the way Apostrophe terminates its process.
 * Adds new configuration option - `beforeExit` async handler.
-* Handlers listening for `apostrophe:run` event are now able to send exit signal to the Apostrophe bootstrap routine.
-* Adds new event `@apostrophecms/doc:afterAllModesDeleted` fired after all modes of a given document are purged.
+* Handlers listening for the `apostrophe:run` event are now able to send an exit code to the Apostrophe bootstrap routine.
 * Support for Node.js 17 and 18. MongoDB connections to `localhost` will now successfully find a typical dev MongoDB server bound only to `127.0.0.1`, Apostrophe can generate valid ipv6 URLs pointing back to itself, and `webpack` and `vue-loader` have been updated to address incompatibilities.
+* Adds support for custom context menus provided by any module (see `apos.doc.addContextOperation()`).
+* The `AposSchema` component now supports an optional `generation` prop which may be used to force a refresh when the value of the object changes externally. This is a compromise to avoid the performance hit of checking numerous subfields for possible changes every time the `value` prop changes in response to an `input` event.
+* Adds new event `@apostrophecms/doc:afterAllModesDeleted` fired after all modes of a given document are purged.
 
 ### Fixes
 
 * Documentation of obsolete options has been removed.
 * Dead code relating to activating in-context widget editors have been removed. They are always active and have been for some time. In the future they might be swapped in on scroll, but there will never be a need to swap them in "on click."
+* The `self.email` method of modules now correctly accepts a default `from` address configured for a specific module via the `from` subproperty of the `email` option to that module. Thanks to `chmdebeer` for pointing out the issue and the fix.
 * Fixes `_urls` not added on attachment fields when pieces API index is requested (#3643)
 * Fixes float field UI bug that transforms the value to integer when there is no field error and the first number after the decimal is `0`.
+* The `nestedModuleSubdirs` feature no longer throws an error and interrupts startup if a project contains both `@apostrophecms/asset` and `asset`, which should be considered separate module names.
 
 ## 3.17.0 (2022-03-31)
 
@@ -30,9 +711,9 @@
 * Adds possibility for modules to [add extra frontend bundles for scss and js](https://v3.docs.apostrophecms.org/guide/webpack.html). This is useful when the `ui/src` build would otherwise be very large due to code used on rarely accessed pages.
 * Loads the right bundles on the right pages depending on the page template and the loaded widgets. Logged-in users have all the bundles on every page, because they might introduce widgets at any time.
 * Fixes deprecation warnings displayed after running `npm install`, for dependencies that are directly included by this package.
-* Implement custom ETags emission when `etags` cache option is enabled. [See the documentation for more information](https://v3.docs.apostrophecms.org/guide/caching.html).  
-It allows caching of pages and pieces, using a cache invalidation mechanism that takes into account related (and reverse related) document updates, thanks to backlinks mentioned above.  
-Note that for now, only single pages and pieces benefit from the ETags caching system (pages' and pieces' `getOne` REST API route, and regular served pages).  
+* Implement custom ETags emission when `etags` cache option is enabled. [See the documentation for more information](https://v3.docs.apostrophecms.org/guide/caching.html).
+It allows caching of pages and pieces, using a cache invalidation mechanism that takes into account related (and reverse related) document updates, thanks to backlinks mentioned above.
+Note that for now, only single pages and pieces benefit from the ETags caching system (pages' and pieces' `getOne` REST API route, and regular served pages).
 The cache of an index page corresponding to the type of a piece that was just saved will automatically be invalidated. However, please consider that it won't be effective when a related piece is saved, therefore the cache will automatically be invalidated _after_ the cache lifetime set in `maxAge` cache option.
 
 ### Fixes

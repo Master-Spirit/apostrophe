@@ -50,7 +50,8 @@ export default {
   data() {
     return {
       conflict: false,
-      isArchived: null
+      isArchived: null,
+      originalSlugPartsLength: null
     };
   },
   computed: {
@@ -110,13 +111,15 @@ export default {
           if (this.field.page) {
             let parts = this.next.split('/');
             parts = parts.filter(part => part.length > 0);
-            if (parts.length) {
+            if ((!this.originalSlugPartsLength && parts.length) || (this.originalSlugPartsLength && parts.length === (this.originalSlugPartsLength - 1))) {
               // Remove last path component so we can replace it
               parts.pop();
             }
             parts.push(this.slugify(newValue, { componentOnly: true }));
-            // TODO: handle page archives.
-            this.next = `/${parts.join('/')}`;
+            if (parts[0].length) {
+              // TODO: handle page archives.
+              this.next = `/${parts.join('/')}`;
+            }
           } else {
             this.next = this.slugify(newValue);
           }
@@ -129,6 +132,7 @@ export default {
     if (this.next.length) {
       await this.debouncedCheckConflict();
     }
+    this.originalSlugPartsLength = this.next.split('/').length;
   },
   methods: {
     async watchNext() {
@@ -186,9 +190,13 @@ export default {
       const options = {
         def: ''
       };
-      if (this.field.page && !componentOnly) {
+
+      if (this.field.aposIsTemplate) {
+        options.allow = this.field.page ? [ '/', '@' ] : '@';
+      } else if (this.field.page && !componentOnly) {
         options.allow = '/';
       }
+
       let preserveDash = false;
       // When you are typing a slug it feels wrong for hyphens you typed
       // to disappear as you go, so if the last character is not valid in a slug,
@@ -196,11 +204,23 @@ export default {
       if (this.focus && s.length && (sluggo(s.charAt(s.length - 1), options) === '')) {
         preserveDash = true;
       }
+
       s = sluggo(s, options);
       if (preserveDash) {
         s += '-';
       }
+
       if (this.field.page && !componentOnly) {
+        if (!this.followingValues?.title) {
+          const nextParts = this.next.split('/');
+          if (s === nextParts[nextParts.length - 1]) {
+            s = '';
+            if (this.originalSlugPartsLength === nextParts.length) {
+              nextParts.pop();
+            }
+            this.next = nextParts.join('/');
+          }
+        }
         if (!s.charAt(0) !== '/') {
           s = `/${s}`;
         }
@@ -208,7 +228,11 @@ export default {
         if (s !== '/') {
           s = s.replace(/\/$/, '');
         }
+        if (!this.followingValues?.title && s.length) {
+          s += '/';
+        }
       }
+
       if (!componentOnly) {
         s = this.setPrefix(s);
       }
@@ -245,27 +269,42 @@ export default {
         // doc editor modal it will momentarily be tracked as archived but
         // without not have the archive prefix, so check that too.
         updated = this.isArchived && archivePrefix ? `${archivePrefix}${updated}` : updated;
+      } else if (this.field.aposIsTemplate) {
+        let prefix = '';
+        if (this.field.page) {
+          if (!updated.startsWith('/@')) {
+            prefix = '/@';
+          }
+        } else {
+          if (!updated.startsWith('@')) {
+            prefix = '@';
+          }
+        }
+        updated = prefix + updated;
       }
+
       return updated;
     },
     async checkConflict() {
       let slug;
       try {
         slug = this.next;
-        await apos.http.post(`${apos.doc.action}/slug-taken`, {
-          body: {
-            slug,
-            _id: this.docId
-          },
-          draft: true
-        });
-        // Still relevant?
-        if (slug === this.next) {
-          this.conflict = false;
-          this.validateAndEmit();
-        } else {
-          // Can ignore it, another request
-          // probably already in-flight
+        if (slug.length) {
+          await apos.http.post(`${apos.doc.action}/slug-taken`, {
+            body: {
+              slug,
+              _id: this.docId
+            },
+            draft: true
+          });
+          // Still relevant?
+          if (slug === this.next) {
+            this.conflict = false;
+            this.validateAndEmit();
+          } else {
+            // Can ignore it, another request
+            // probably already in-flight
+          }
         }
       } catch (e) {
         // 409: Conflict (slug in use)

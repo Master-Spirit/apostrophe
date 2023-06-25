@@ -29,9 +29,29 @@ const packageJsonInfo = {
   }
 };
 for (const dir of dirs) {
-  packageJsonInfo.dependencies[dir] = '1.0.0';
+  // Add namespaced modules support
+  if (dir.startsWith('@')) {
+    const submodules = fs.readdirSync(path.join(extras, dir));
+    for (const submodule of submodules) {
+      packageJsonInfo.dependencies[`${dir}/${submodule}`] = '1.0.0';
+    }
+  } else {
+    packageJsonInfo.dependencies[dir] = '1.0.0';
+  }
 }
 
 fs.writeFileSync(packageJson, JSON.stringify(packageJsonInfo, null, '  '));
+
+// A "project level" package-lock.json for checking webpack build cache
+
+const packageLockJson = path.join(__dirname, '/../test/package-lock.json');
+const packageLockJsonInfo = {
+  _: 'Do not change, fake lock used for testing',
+  name: 'apostrophe',
+  version: 'current',
+  packages: {}
+};
+fs.removeSync(packageLockJson);
+fs.writeFileSync(packageLockJson, JSON.stringify(packageLockJsonInfo, null, '  '));
 
 module.exports = require('./util.js');

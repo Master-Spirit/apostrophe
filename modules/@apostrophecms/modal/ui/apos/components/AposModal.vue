@@ -1,8 +1,8 @@
 <template>
   <transition
     :name="transitionType"
-    @enter="finishEnter"
-    @leave="finishExit"
+    @enter="onEnter"
+    @leave="onLeave"
     :duration="250"
   >
     <section
@@ -12,14 +12,21 @@
       aria-modal="true"
       :aria-labelledby="id"
       ref="modalEl"
+      data-apos-modal
     >
       <transition :name="transitionType">
-        <div class="apos-modal__overlay" v-if="modal.showModal" />
+        <div
+          @click="close"
+          v-if="modal.showModal"
+          class="apos-modal__overlay"
+        />
       </transition>
       <transition :name="transitionType" @after-leave="$emit('inactive')">
         <div
-          v-if="modal.showModal" :class="innerClasses"
-          class="apos-modal__inner" data-apos-modal-inner
+          v-if="modal.showModal"
+          :class="innerClasses"
+          class="apos-modal__inner"
+          data-apos-modal-inner
         >
           <template v-if="modal.busy">
             <div class="apos-modal__busy">
@@ -107,7 +114,11 @@ export default {
   computed: {
     transitionType: function () {
       if (this.modal.type === 'slide') {
-        return 'slide';
+        if (this.modal.origin === 'left') {
+          return 'slide-right';
+        } else {
+          return 'slide-left';
+        }
       } else {
         return 'fade';
       }
@@ -143,6 +154,11 @@ export default {
       const classes = [ 'apos-modal' ];
       classes.push(`apos-modal--${this.modal.type}`);
       if (this.modal.type === 'slide') {
+        if (this.modal.origin) {
+          classes.push(`apos-modal--origin-${this.modal.origin}`);
+        } else {
+          classes.push('apos-modal--origin-right');
+        }
         classes.push('apos-modal--full-height');
       }
       if (this.modal.busy) {
@@ -180,16 +196,13 @@ export default {
     }
   },
   methods: {
-    esc (e) {
-      if (apos.modal.stack[apos.modal.stack.length - 1] !== this) {
-        return;
-      }
-      if (e.keyCode === 27) {
-        e.stopPropagation();
-        this.$emit('esc');
+    onKeydown (e) {
+      const hasPressedEsc = e.keyCode === 27;
+      if (hasPressedEsc) {
+        this.close(e);
       }
     },
-    finishEnter () {
+    onEnter () {
       this.$emit('show-modal');
       this.bindEventListeners();
       apos.modal.stack = apos.modal.stack || [];
@@ -198,7 +211,7 @@ export default {
         this.$emit('ready');
       });
     },
-    finishExit () {
+    onLeave () {
       this.removeEventListeners();
       this.$emit('no-modal');
       // pop doesn't quite suffice because of race conditions when
@@ -206,10 +219,17 @@ export default {
       apos.modal.stack = apos.modal.stack.filter(modal => modal !== this);
     },
     bindEventListeners () {
-      window.addEventListener('keydown', this.esc);
+      window.addEventListener('keydown', this.onKeydown);
     },
     removeEventListeners () {
-      window.removeEventListener('keydown', this.esc);
+      window.removeEventListener('keydown', this.onKeydown);
+    },
+    close (e) {
+      if (apos.modal.stack[apos.modal.stack.length - 1] !== this) {
+        return;
+      }
+      e.stopPropagation();
+      this.$emit('esc');
     },
     trapFocus () {
       // Adapted from https://uxdesign.cc/how-to-trap-focus-inside-modal-to-make-it-ada-compliant-6a50f9a70700
@@ -265,32 +285,49 @@ export default {
   .apos-modal__inner {
     z-index: $z-index-modal;
     position: fixed;
-    top: $spacing-double;
-    right: $spacing-double;
-    bottom: $spacing-double;
-    left: $spacing-double;
+    top: $spacing-base;
+    right: $spacing-base;
+    bottom: $spacing-base;
+    left: $spacing-base;
     display: grid;
     grid-template-rows: auto 1fr auto;
-    height: calc(100vh - #{$spacing-double * 2});
+    height: calc(100vh - #{$spacing-base * 2});
     border-radius: var(--a-border-radius);
     background-color: var(--a-background-primary);
     border: 1px solid var(--a-base-9);
     color: var(--a-text-primary);
 
+    @include media-up(lap) {
+      top: $spacing-double;
+      right: $spacing-double;
+      bottom: $spacing-double;
+      left: $spacing-double;
+      height: calc(100vh - #{$spacing-double * 2});
+    }
+
     .apos-modal--slide & {
       position: fixed;
       transition: transform 0.15s ease;
       top: 0;
-      right: 0;
       bottom: 0;
-      left: auto;
       transform: translateX(0);
       width: 90%;
       border-radius: 0;
+      height: 100vh;
 
       @media screen and (min-width: 800px) {
         max-width: 540px;
       }
+    }
+
+    .apos-modal--origin-right & {
+      right: 0;
+      left: auto;
+    }
+
+    .apos-modal--origin-left & {
+      right: auto;
+      left: 0;
     }
 
     &.apos-modal__inner--two-thirds {
@@ -305,9 +342,14 @@ export default {
       }
     }
 
-    &.slide-enter,
-    &.slide-leave-to {
+    &.slide-left-enter,
+    &.slide-left-leave-to {
       transform: translateX(100%);
+    }
+
+    &.slide-right-enter,
+    &.slide-right-leave-to {
+      transform: translateX(-100%);
     }
 
     .apos-modal--overlay & {
@@ -436,7 +478,10 @@ export default {
   }
 
   .apos-modal__main--with-rails {
-    grid-template-columns: 20% 1fr minmax(250px, $modal-rail-right-w);
+    grid-template-columns: 15% 1fr minmax(200px, 10%);
+    @include media-up(lap) {
+      grid-template-columns: 15% 1fr minmax(250px, $modal-rail-right-w);
+    }
   }
 
   .apos-modal__main--with-left-rail {

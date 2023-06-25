@@ -25,13 +25,15 @@
           :key="item._id"
           :item="item"
           :selected="selected === item._id"
-          :class="{'apos-slat-list__item--disabled' : disabled}"
+          :class="{'apos-slat-list__item--disabled' : disabled, 'apos-input--error': duplicate}"
           :disabled="disabled"
           :engaged="engaged === item._id"
           :parent="listId"
           :slat-count="next.length"
           :removable="removable"
-          :has-relationship-schema="hasRelationshipSchema"
+          :relationship-schema="relationshipSchema"
+          :editor-label="editorLabel"
+          :editor-icon="editorIcon"
         />
       </transition-group>
     </draggable>
@@ -40,6 +42,7 @@
 
 <script>
 import draggable from 'vuedraggable';
+import cuid from 'cuid';
 
 export default {
   name: 'AposSlatList',
@@ -63,9 +66,21 @@ export default {
       type: String,
       default: null
     },
-    hasRelationshipSchema: {
-      type: Boolean,
-      default: false
+    relationshipSchema: {
+      type: Array,
+      default: () => null
+    },
+    editorLabel: {
+      type: String,
+      default: null
+    },
+    editorIcon: {
+      type: String,
+      default: null
+    },
+    duplicate: {
+      type: String,
+      default: null
     }
   },
   emits: [ 'update', 'item-clicked', 'select', 'input' ],
@@ -79,7 +94,7 @@ export default {
   },
   computed: {
     listId() {
-      return `sortableList-${(Math.floor(Math.random() * Math.floor(10000)))}`;
+      return `sortableList-${cuid()}`;
     },
     dragOptions() {
       return {

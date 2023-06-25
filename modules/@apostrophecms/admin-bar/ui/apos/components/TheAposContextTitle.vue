@@ -33,8 +33,9 @@
       />
       <AposLabel
         v-else
-        label="apostrophe:draft" :modifiers="['apos-is-warning', 'apos-is-filled']"
-        tooltip="apostrophe:notYetPublished"
+        :label="unpublishedLabel"
+        :tooltip="unpublishedTooltip"
+        :modifiers="['apos-is-warning', 'apos-is-filled']"
       />
     </span>
   </transition-group>
@@ -102,9 +103,33 @@ export default {
           modifiers: (this.draftMode === 'published') ? [ 'disabled', 'selected' ] : null
         }
       ];
+    },
+    canTogglePublishDraftMode() {
+      return !this.isUnpublished && !this.hasCustomUi;
+    },
+    moduleOptions() {
+      return window.apos.adminBar;
+    },
+    unpublishedLabel() {
+      return this.moduleOptions.unpublishedLabel || 'apostrophe:draft';
+    },
+    unpublishedTooltip() {
+      return this.moduleOptions.unpublishedTooltip || 'apostrophe:notYetPublished';
     }
   },
+  mounted() {
+    apos.bus.$on('command-menu-admin-bar-toggle-publish-draft', this.togglePublishDraftMode);
+  },
+  destroyed() {
+    apos.bus.$off('command-menu-admin-bar-toggle-publish-draft', this.togglePublishDraftMode);
+  },
   methods: {
+    togglePublishDraftMode() {
+      if (this.canTogglePublishDraftMode) {
+        const mode = this.draftMode === 'draft' ? 'published' : 'draft';
+        this.switchDraftMode(mode);
+      }
+    },
     switchDraftMode(mode) {
       this.$emit('switch-draft-mode', mode);
     }

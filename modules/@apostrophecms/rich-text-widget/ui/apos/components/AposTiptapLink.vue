@@ -6,8 +6,14 @@
       :class="{ 'apos-is-active': buttonActive }"
       :label="tool.label"
       :icon-only="!!tool.icon"
-      :icon="tool.icon ? tool.icon : false"
+      :icon="tool.icon || false"
+      :icon-size="tool.iconSize || 16"
       :modifiers="['no-border', 'no-motion']"
+      :tooltip="{
+        content: tool.label,
+        placement: 'top',
+        delay: 650
+      }"
     />
     <div
       v-if="active"
@@ -31,9 +37,13 @@
         </div>
         <AposSchema
           :schema="schema"
-          v-model="value"
+          :trigger-validation="triggerValidation"
+          v-model="docFields"
           :modifiers="formModifiers"
           :key="lastSelectionTime"
+          :generation="generation"
+          :following-values="followingValues()"
+          :conditional-fields="conditionalFields()"
         />
         <footer class="apos-link-control__footer">
           <AposButton
@@ -53,9 +63,11 @@
 </template>
 
 <script>
+import AposEditorMixin from 'Modules/@apostrophecms/modal/mixins/AposEditorMixin';
 
 export default {
   name: 'AposTiptapLink',
+  mixins: [ AposEditorMixin ],
   props: {
     name: {
       type: String,
@@ -70,30 +82,80 @@ export default {
       required: true
     }
   },
-  data () {
+  data() {
+    const linkWithType = getOptions().linkWithType;
     return {
-      keepInBounds: true,
+      generation: 1,
       href: null,
       target: null,
       active: false,
       hasLinkOnOpen: false,
-      value: {
+      triggerValidation: false,
+      docFields: {
         data: {}
       },
       formModifiers: [ 'small', 'margin-micro' ],
-      schema: [
+      originalSchema: [
+        {
+          name: 'linkTo',
+          label: this.$t('apostrophe:linkTo'),
+          type: 'select',
+          def: linkWithType[0],
+          required: true,
+          choices: [
+            ...(linkWithType.map(type => {
+              return {
+                // Should already be localized server side
+                label: apos.modules[type].label,
+                value: type
+              };
+            })),
+            {
+              // TODO this needs i18n
+              label: this.$t('apostrophe:url'),
+              // Value that will never be a doc type
+              value: '_url'
+            }
+          ]
+        },
+        ...getOptions().linkWithType.map(type => ({
+          name: `_${type}`,
+          type: 'relationship',
+          label: apos.modules[type].label,
+          withType: type,
+          required: true,
+          max: 1,
+          browse: true,
+          if: {
+            linkTo: type
+          }
+        })),
+        {
+          name: 'updateTitle',
+          label: this.$t('apostrophe:updateTitle'),
+          type: 'boolean',
+          def: true,
+          if: {
+            $or: linkWithType.map(type => ({
+              linkTo: type
+            }))
+          }
+        },
         {
           name: 'href',
-          label: 'URL',
-          type: 'string'
+          label: this.$t('apostrophe:url'),
+          type: 'string',
+          if: {
+            linkTo: '_url'
+          }
         },
         {
           name: 'target',
-          label: 'Link Target',
+          label: this.$t('apostrophe:linkTarget'),
           type: 'checkboxes',
           choices: [
             {
-              label: 'Open link in new tab',
+              label: this.$t('apostrophe:openLinkInNewTab'),
               value: '_blank'
             }
           ]
@@ -103,7 +165,7 @@ export default {
   },
   computed: {
     buttonActive() {
-      return this.value.data && this.value.data.href;
+      return this.editor.getAttributes('link').href || this.active;
     },
     lastSelectionTime() {
       return this.editor.view.lastSelectionTime;
@@ -115,17 +177,14 @@ export default {
       const text = state.doc.textBetween(from, to, '');
       return text !== '';
     },
-    offset() {
-      const selection = window.getSelection();
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      return (rect.height + 15) + 'px';
+    schema() {
+      return this.originalSchema;
     }
   },
   watch: {
     active(newVal) {
       if (newVal) {
-        this.hasLinkOnOpen = !!(this.value.data.href);
+        this.hasLinkOnOpen = !!(this.docFields.data.href);
         window.addEventListener('keydown', this.keyboardHandler);
       } else {
         window.removeEventListener('keydown', this.keyboardHandler);
@@ -144,7 +203,7 @@ export default {
   },
   methods: {
     removeLink() {
-      this.value.data = {};
+      this.docFields.data = {};
       this.editor.commands.unsetLink();
       this.close();
     },
@@ -161,19 +220,32 @@ export default {
       }
     },
     save() {
-      // cleanup incomplete submissions
-      if (this.value.data.target && !this.value.data.href) {
-        delete this.value.data.target;
-      }
-      this.editor.commands.setLink(this.value.data);
-      this.active = false;
+      this.triggerValidation = true;
+      this.$nextTick(() => {
+        if (this.docFields.hasErrors) {
+          return;
+        }
+        if (this.docFields.data.linkTo !== '_url') {
+          const doc = this.docFields.data[`_${this.docFields.data.linkTo}`][0];
+          this.docFields.data.href = `#apostrophe-permalink-${doc.aposDocId}?updateTitle=${this.docFields.data.updateTitle ? 1 : 0}`;
+        }
+        // Clean up incomplete submissions
+        if (this.docFields.data.target && !this.docFields.data.href) {
+          delete this.docFields.data.target;
+        }
+        this.editor.commands.setLink({
+          target: this.docFields.data.target[0],
+          href: this.docFields.data.href
+        });
+        this.close();
+      });
     },
     keyboardHandler(e) {
       if (e.keyCode === 27) {
         this.close();
       }
       if (e.keyCode === 13) {
-        if (this.value.data.href || e.metaKey) {
+        if (this.docFields.data.href || e.metaKey) {
           this.save();
           this.close();
           e.preventDefault();
@@ -182,15 +254,51 @@ export default {
         }
       }
     },
-    populateFields() {
-      const attrs = this.editor.getAttributes('link');
-      this.value.data = {};
-      this.schema.forEach((item) => {
-        this.value.data[item.name] = attrs[item.name] || '';
-      });
+    async populateFields() {
+      try {
+        const attrs = this.editor.getAttributes('link');
+        if (attrs.target) {
+          // checkboxes field expects an array
+          attrs.target = [ attrs.target ];
+        }
+        this.docFields.data = {};
+        this.schema.forEach((item) => {
+          this.docFields.data[item.name] = attrs[item.name] || '';
+        });
+        const matches = this.docFields.data.href.match(/^#apostrophe-permalink-(.*)\?updateTitle=(\d)$/);
+        if (!matches) {
+          this.docFields.data.updateTitle = true;
+          this.docFields.data.linkTo = '_url';
+          return;
+        }
+        // Never expose the special link format for permalinks in the UI
+        this.docFields.data.href = '';
+        try {
+          const doc = await apos.http.get(`/api/v1/@apostrophecms/doc/${matches[1]}`, {
+            busy: true
+          });
+          this.docFields.data.linkTo = doc.slug.startsWith('/') ? '@apostrophecms/any-page-type' : doc.type;
+          this.docFields.data[`_${this.docFields.data.linkTo}`] = [ doc ];
+          this.docFields.data.updateTitle = !!parseInt(matches[2]);
+        } catch (e) {
+          if (e.status === 404) {
+            // No longer available
+            this.docFields.data.updateTitle = true;
+            this.docFields.linkTo = 'url';
+          } else {
+            throw e;
+          }
+        }
+      } finally {
+        this.generation++;
+      }
     }
   }
 };
+
+function getOptions() {
+  return apos.modules['@apostrophecms/rich-text-widget'];
+}
 </script>
 
 <style lang="scss" scoped>
@@ -204,9 +312,12 @@ export default {
     position: absolute;
     top: calc(100% + 5px);
     left: -15px;
-    width: 250px;
     opacity: 0;
     pointer-events: none;
+  }
+
+  .apos-context-menu__dialog {
+    width: 500px;
   }
 
   .apos-link-control__dialog.apos-is-triggered.apos-has-selection {

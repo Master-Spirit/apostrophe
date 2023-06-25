@@ -8,10 +8,14 @@
       <div class="apos-input-wrapper">
         <input
           :class="classes"
-          v-model="next.url" type="url"
+          v-model="next.url"
+          type="url"
           :placeholder="$t(field.placeholder)"
-          :disabled="field.readOnly" :required="field.required"
-          :id="uid" :tabindex="tabindex"
+          :disabled="field.readOnly"
+          :readonly="tempReadOnly"
+          :required="field.required"
+          :id="uid"
+          :tabindex="tabindex"
         >
         <component
           v-if="icon"
@@ -19,12 +23,16 @@
           class="apos-input-icon"
           :is="icon"
         />
+        <!-- eslint-disable vue/no-v-html -->
         <div
-          v-if="!error && oembedResult.html" v-html="oembedResult.html"
-          class="apos-input__embed" :class="{ 'apos-is-dynamic': !!dynamicRatio }"
+          v-if="!error && oembedResult.html"
+          v-html="oembedResult.html"
+          class="apos-input__embed"
+          :class="{ 'apos-is-dynamic': !!dynamicRatio }"
           :style="{ paddingTop: dynamicRatio && `${(dynamicRatio * 100)}%` }"
         />
       </div>
+      <!-- eslint-enable vue/no-v-html -->
     </template>
   </AposInputWrapper>
 </template>
@@ -39,10 +47,14 @@ export default {
   data () {
     return {
       next: (this.value && this.value.data)
-        ? this.value.data : {},
+        ? { ...this.value.data } : {},
       oembedResult: {},
       dynamicRatio: '',
-      oembedError: null
+      oembedError: null,
+
+      // This variable will set the input as readonly,
+      // not disabled, in order to avoid losing focus.
+      tempReadOnly: false
     };
   },
   computed: {
@@ -100,7 +112,7 @@ export default {
       this.validateAndEmit();
     },
     async loadOembed () {
-      this.field.readOnly = true;
+      this.tempReadOnly = true;
       this.oembedResult = {};
       this.oembedError = null;
       this.dynamicRatio = '';
@@ -128,7 +140,7 @@ export default {
         this.next.title = '';
         this.next.thumbnail = '';
       } finally {
-        this.field.readOnly = false;
+        this.tempReadOnly = false;
       }
     }
   }

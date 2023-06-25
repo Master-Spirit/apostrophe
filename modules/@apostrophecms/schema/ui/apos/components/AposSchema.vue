@@ -1,11 +1,38 @@
 <!--
-  AposSchema takes an array of fields with their values, renders their inputs, and emits their `input` events
+  AposSchema takes an array of fields (`schema`), renders their inputs,
+  and emits a new object with a `value` subproperty and a `hasErrors`
+  subproperty via the input event whenever the value of a field
+  or subfield changes.
+
+  At mount time the fields are initialized from the subproperties of the
+  `value.data` prop.
+
+  For performance reasons, this component is not strictly v-model compliant.
+  While all changes will emit an outgoing `input` event, the
+  incoming `value` prop only updates the fields in three situations:
+
+  1. At mount time, to set the initial values of the fields.
+
+  2. When `value.data._id` changes (an entirely different document is in play).
+
+  3. When the optional prop `generation` changes to a new number. This
+  prop is also passed on to the individual input field components.
+
+  If you need to force an update from the calling component, increment the
+  `generation` prop. This should be done only if the value has changed for
+  an external reason.
 -->
 <template>
-  <div class="apos-schema">
-    <div
+  <component
+    class="apos-schema"
+    :is="fieldStyle === 'table' ? 'tr' : 'div'"
+  >
+    <slot name="before" />
+    <component
       v-for="field in schema" :key="field.name"
       :data-apos-field="field.name"
+      :is="fieldStyle === 'table' ? 'td' : 'div'"
+      v-show="displayComponent(field.name)"
     >
       <component
         v-show="displayComponent(field.name)"
@@ -20,9 +47,11 @@
         :server-error="fields[field.name].serverError"
         :doc-id="docId"
         :ref="field.name"
+        :generation="generation"
       />
-    </div>
-  </div>
+    </component>
+    <slot name="after" />
+  </component>
 </template>
 
 <script>
@@ -35,9 +64,21 @@ export default {
       type: Object,
       required: true
     },
+    generation: {
+      type: Number,
+      required: false,
+      default() {
+        return null;
+      }
+    },
     schema: {
       type: Array,
       required: true
+    },
+    fieldStyle: {
+      type: String,
+      required: false,
+      default: ''
     },
     currentFields: {
       type: Array,
@@ -64,7 +105,12 @@ export default {
       }
     },
     triggerValidation: Boolean,
-    utilityRail: Boolean,
+    utilityRail: {
+      type: Boolean,
+      default() {
+        return false;
+      }
+    },
     docId: {
       type: String,
       default() {
@@ -113,6 +159,7 @@ export default {
       this.schema.forEach(item => {
         fields[item.name] = {};
         fields[item.name].field = item;
+        fields[item.name].field.aposIsTemplate = this.value?.data?.aposIsTemplate;
         fields[item.name].value = {
           data: this.value[item.name]
         };
@@ -135,21 +182,22 @@ export default {
     schema() {
       this.populateDocData();
     },
-    value: {
-      deep: true,
-      handler(newVal, oldVal) {
-        // The doc might be swapped out completely in cases such as the media
-        // library editor. Repopulate the fields if that happens.
-        if (
-          // If the fieldState had been cleared and there's new populated data
-          (!this.fieldState._id && newVal.data._id) ||
-          // or if there *is* active fieldState, but the new data is a new doc
-          (this.fieldState._id && newVal.data._id !== this.fieldState._id.data)
-        ) {
-          // repopulate the schema.
-          this.populateDocData();
-        }
+    'value.data._id'(_id) {
+      // The doc might be swapped out completely in cases such as the media
+      // library editor. Repopulate the fields if that happens.
+      if (
+        // If the fieldState had been cleared and there's new populated data
+        (!this.fieldState._id && _id) ||
+        // or if there *is* active fieldState, but the new data is a new doc
+        (this.fieldState._id && _id !== this.fieldState._id.data)
+      ) {
+        // repopulate the schema.
+        this.populateDocData();
       }
+    },
+    generation() {
+      // repopulate the schema.
+      this.populateDocData();
     },
     conditionalFields(newVal, oldVal) {
       for (const field in oldVal) {
@@ -288,6 +336,13 @@ export default {
   .apos-schema ::v-deep .apos-field__wrapper {
     max-width: $input-max-width;
   }
+  .apos-schema ::v-deep .apos-field__wrapper.apos-field__wrapper--full-width {
+    max-width: inherit;
+  }
+
+  .apos-schema ::v-deep .apos-field__wrapper--area {
+    max-width: 100%;
+  }
 
   .apos-schema ::v-deep img {
     max-width: 100%;
@@ -296,9 +351,13 @@ export default {
   .apos-field {
     .apos-schema ::v-deep & {
       margin-bottom: $spacing-quadruple;
+      &.apos-field--small,
       &.apos-field--micro,
       &.apos-field--margin-micro {
         margin-bottom: $spacing-double;
+      }
+      &.apos-field--margin-none {
+        margin-bottom: 0;
       }
     }
 
